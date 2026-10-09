@@ -1,0 +1,68 @@
+// prisma/schema.prisma
+// Phase 1: User, Skill, StudySession only.
+// Future entities (Goal, LevelAssessment, ExamResult, Recommendation, etc.)
+// are documented in the architecture blueprint and will be added in later phases.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Identity ────────────────────────────────────────────────────────────────
+// Single-user for Phase 1. Auth fields (email, passwordHash) added in Phase 5.
+// userId is hardcoded to a seed row in Phase 1.
+
+model User {
+  id          String   @id @default(uuid())
+  displayName String
+  timezone    String   @default("UTC")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sessions StudySession[]
+
+  @@map("users")
+}
+
+// ─── Skills (Seed data) ───────────────────────────────────────────────────────
+
+model Skill {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String?
+  isDefault   Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  sessions StudySession[]
+
+  @@map("skills")
+}
+
+// ─── Study Activity (Source of Truth) ────────────────────────────────────────
+// durationMinutes is intentionally denormalized for query performance.
+// It must always equal round((endedAt - startedAt) / 60).
+// Enforced at the service layer.
+
+model StudySession {
+  id              String   @id @default(uuid())
+  userId          String
+  skillId         String
+  startedAt       DateTime // UTC
+  endedAt         DateTime // UTC
+  durationMinutes Int // Derived and stored for query performance
+  notes           String?
+  isManual        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id])
+  skill Skill @relation(fields: [skillId], references: [id])
+
+  @@index([userId, startedAt])
+  @@index([userId, skillId])
+  @@map("study_sessions")
+}
