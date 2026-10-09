@@ -1,7 +1,5 @@
 // prisma/schema.prisma
-// Phase 1: User, Skill, StudySession only.
-// Future entities (Goal, LevelAssessment, ExamResult, Recommendation, etc.)
-// are documented in the architecture blueprint and will be added in later phases.
+// Phase 2: Complete Core Domain Model
 
 generator client {
   provider = "prisma-client-js"
@@ -12,9 +10,59 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum ObjectiveType {
+  IELTS
+  TOEFL
+  GENERAL_ENGLISH
+  IMMIGRATION
+  CUSTOM
+}
+
+enum PlanStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+  CANCELLED
+}
+
+enum GoalPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum CefrLevel {
+  A1
+  A2
+  B1
+  B2
+  C1
+  C2
+}
+
+enum AssessmentMethod {
+  SELF_REPORTED
+  MOCK_TEST
+  FORMAL_EXAM
+}
+
+enum ExamType {
+  IELTS
+  TOEFL
+  OTHER
+}
+
+enum ExamStatus {
+  PLANNED
+  REGISTERED
+  COMPLETED
+  CANCELLED
+}
+
 // ─── Identity ────────────────────────────────────────────────────────────────
-// Single-user for Phase 1. Auth fields (email, passwordHash) added in Phase 5.
-// userId is hardcoded to a seed row in Phase 1.
 
 model User {
   id          String   @id @default(uuid())
@@ -23,12 +71,18 @@ model User {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  sessions StudySession[]
+  sessions         StudySession[]
+  categories       Category[]
+  objectives       LearningObjective[]
+  plans            LongTermPlan[]
+  goals            Goal[]
+  levelAssessments LevelAssessment[]
+  exams            Exam[]
 
   @@map("users")
 }
 
-// ─── Skills (Seed data) ───────────────────────────────────────────────────────
+// ─── Skills (Seed Data) ───────────────────────────────────────────────────────
 
 model Skill {
   id          String  @id @default(uuid())
@@ -37,32 +91,237 @@ model Skill {
   isDefault   Boolean @default(true)
   sortOrder   Int     @default(0)
 
-  sessions StudySession[]
+  sessions    StudySession[]
+  goalTargets GoalSkillTarget[]
+  milestones  PlanMilestone[]
 
   @@map("skills")
 }
 
+// ─── Categories (Seed & Custom) ──────────────────────────────────────────────
+
+model Category {
+  id          String  @id @default(uuid())
+  userId      String? // null for system defaults; set for user-defined custom categories
+  name        String
+  description String?
+  isDefault   Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  user     User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions StudySession[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("categories")
+}
+
 // ─── Study Activity (Source of Truth) ────────────────────────────────────────
-// durationMinutes is intentionally denormalized for query performance.
-// It must always equal round((endedAt - startedAt) / 60).
-// Enforced at the service layer.
 
 model StudySession {
   id              String   @id @default(uuid())
   userId          String
   skillId         String
+  categoryId      String?
+  topic           String?
+  description     String?
   startedAt       DateTime // UTC
   endedAt         DateTime // UTC
-  durationMinutes Int // Derived and stored for query performance
+  durationMinutes Int // Derived and stored for query performance (endedAt - startedAt)
+  selfRating      Int? // 1 to 5 rating
   notes           String?
   isManual        Boolean  @default(false)
+  planId          String?
+  milestoneId     String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id])
-  skill Skill @relation(fields: [skillId], references: [id])
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill     Skill          @relation(fields: [skillId], references: [id])
+  category  Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  plan      LongTermPlan?  @relation(fields: [planId], references: [id], onDelete: SetNull)
+  milestone PlanMilestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
 
   @@index([userId, startedAt])
   @@index([userId, skillId])
+  @@index([userId, categoryId])
+  @@index([startedAt, endedAt])
   @@map("study_sessions")
+}
+
+// ─── Learning Objectives ─────────────────────────────────────────────────────
+
+model LearningObjective {
+  id          String        @id @default(uuid())
+  userId      String
+  type        ObjectiveType
+  title       String
+  description String?
+  targetScore Float?
+  targetDate  DateTime?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plans LongTermPlan[]
+  goals Goal[]
+  exams Exam[]
+
+  @@index([userId, isActive])
+  @@map("learning_objectives")
+}
+
+// ─── Long-Term Plans ─────────────────────────────────────────────────────────
+
+model LongTermPlan {
+  id            String    @id @default(uuid())
+  userId        String
+  title         String
+  description   String?
+  startDate     DateTime
+  endDate       DateTime
+  targetMinutes Int
+  status        PlanStatus @default(ACTIVE)
+  objectiveId   String?
+  examId        String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  objective LearningObjective? @relation(fields: [objectiveId], references: [id], onDelete: SetNull)
+  exam      Exam?              @relation(fields: [examId], references: [id], onDelete: SetNull)
+
+  milestones PlanMilestone[]
+  goals      Goal[]
+  sessions   StudySession[]
+
+  @@index([userId, status])
+  @@index([userId, startDate, endDate])
+  @@map("long_term_plans")
+}
+
+// ─── Plan Milestones ─────────────────────────────────────────────────────────
+
+model PlanMilestone {
+  id            String     @id @default(uuid())
+  planId        String
+  title         String
+  description   String?
+  startDate     DateTime
+  endDate       DateTime
+  targetMinutes Int
+  skillId       String?
+  status        PlanStatus @default(ACTIVE)
+  ordering      Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  plan  LongTermPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  skill Skill?         @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  sessions StudySession[]
+
+  @@index([planId, ordering])
+  @@index([planId, startDate, endDate])
+  @@map("plan_milestones")
+}
+
+// ─── Goals ───────────────────────────────────────────────────────────────────
+
+model Goal {
+  id            String     @id @default(uuid())
+  userId        String
+  period        GoalPeriod
+  targetMinutes Int
+  startDate     DateTime
+  endDate       DateTime?
+  isActive      Boolean    @default(true)
+  planId        String?
+  objectiveId   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan      LongTermPlan?      @relation(fields: [planId], references: [id], onDelete: SetNull)
+  objective LearningObjective? @relation(fields: [objectiveId], references: [id], onDelete: SetNull)
+
+  skillTargets GoalSkillTarget[]
+
+  @@index([userId, period, isActive])
+  @@index([userId, startDate])
+  @@map("goals")
+}
+
+model GoalSkillTarget {
+  id            String @id @default(uuid())
+  goalId        String
+  skillId       String
+  targetMinutes Int
+
+  goal  Goal  @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([goalId, skillId])
+  @@map("goal_skill_targets")
+}
+
+// ─── Level Assessments (CEFR) ────────────────────────────────────────────────
+
+model LevelAssessment {
+  id         String           @id @default(uuid())
+  userId     String
+  cefrLevel  CefrLevel
+  assessedAt DateTime
+  method     AssessmentMethod
+  notes      String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, assessedAt])
+  @@map("level_assessments")
+}
+
+// ─── Exams ───────────────────────────────────────────────────────────────────
+
+model Exam {
+  id          String     @id @default(uuid())
+  userId      String
+  objectiveId String?
+  type        ExamType
+  title       String
+  scheduledAt DateTime?
+  venue       String?
+  status      ExamStatus @default(PLANNED)
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  objective LearningObjective? @relation(fields: [objectiveId], references: [id], onDelete: SetNull)
+
+  results ExamResult[]
+  plans   LongTermPlan[]
+
+  @@index([userId, status])
+  @@index([userId, scheduledAt])
+  @@map("exams")
+}
+
+model ExamResult {
+  id           String   @id @default(uuid())
+  examId       String
+  isMock       Boolean  @default(false)
+  takenAt      DateTime
+  overallScore Float
+  skillScores  Json // Flexible JSON structure, e.g. { listening: 7.5, reading: 8.0, writing: 6.5, speaking: 7.0 }
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@index([examId, takenAt])
+  @@map("exam_results")
 }

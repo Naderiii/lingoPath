@@ -7,6 +7,12 @@ import prismaPlugin from './plugins/prisma.js'
 import healthRoutes from './modules/health/health.routes.js'
 import skillRoutes from './modules/skills/skill.routes.js'
 import sessionRoutes from './modules/sessions/session.routes.js'
+import categoryRoutes from './modules/categories/category.routes.js'
+import objectiveRoutes from './modules/objectives/objective.routes.js'
+import planRoutes from './modules/plans/plan.routes.js'
+import goalRoutes from './modules/goals/goal.routes.js'
+import assessmentRoutes from './modules/assessments/assessment.routes.js'
+import examRoutes from './modules/exams/exam.routes.js'
 
 export async function buildApp() {
   const loggerConfig =
@@ -56,6 +62,12 @@ export async function buildApp() {
     async (v1) => {
       await v1.register(skillRoutes)
       await v1.register(sessionRoutes)
+      await v1.register(categoryRoutes)
+      await v1.register(objectiveRoutes)
+      await v1.register(planRoutes)
+      await v1.register(goalRoutes)
+      await v1.register(assessmentRoutes)
+      await v1.register(examRoutes)
     },
     { prefix: '/api/v1' },
   )
