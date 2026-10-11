@@ -521,7 +521,9 @@ describe('Plan service - user ownership and authorization', () => {
     const mockRepo: Partial<PlanRepository> = {
       findById: async (id, userId) => {
         if (userId === 'user-1' && id === 'plan-1') {
-          return { id: 'plan-1', userId: 'user-1' } as unknown as Awaited<ReturnType<PlanRepository['findById']>>
+          return { id: 'plan-1', userId: 'user-1' } as unknown as Awaited<
+            ReturnType<PlanRepository['findById']>
+          >
         }
         return null
       },
@@ -546,9 +548,9 @@ describe('Plan service - user ownership and authorization', () => {
     }
     const service = createPlanService(mockRepo as PlanRepository)
 
-    await expect(
-      service.updateMilestone('ms-1', 'user-2', { title: 'Hacked' }),
-    ).rejects.toThrow("PlanMilestone with id 'ms-1' not found")
+    await expect(service.updateMilestone('ms-1', 'user-2', { title: 'Hacked' })).rejects.toThrow(
+      "PlanMilestone with id 'ms-1' not found",
+    )
   })
 
   it('should not allow user-2 to delete user-1 milestone', async () => {
@@ -604,9 +606,7 @@ describe('Plan service - status transitions', () => {
   }
 
   it('should allow archiving an active plan', async () => {
-    const mockRepo = makeMockRepo(
-      basePlan as Awaited<ReturnType<PlanRepository['findById']>>,
-    )
+    const mockRepo = makeMockRepo(basePlan as Awaited<ReturnType<PlanRepository['findById']>>)
     const service = createPlanService(mockRepo as PlanRepository)
 
     const result = await service.updatePlan('plan-1', 'user-1', { status: 'ARCHIVED' })
@@ -614,9 +614,7 @@ describe('Plan service - status transitions', () => {
   })
 
   it('should allow cancelling an active plan', async () => {
-    const mockRepo = makeMockRepo(
-      basePlan as Awaited<ReturnType<PlanRepository['findById']>>,
-    )
+    const mockRepo = makeMockRepo(basePlan as Awaited<ReturnType<PlanRepository['findById']>>)
     const service = createPlanService(mockRepo as PlanRepository)
 
     const result = await service.updatePlan('plan-1', 'user-1', { status: 'CANCELLED' })
@@ -624,9 +622,7 @@ describe('Plan service - status transitions', () => {
   })
 
   it('should allow completing a plan', async () => {
-    const mockRepo = makeMockRepo(
-      basePlan as Awaited<ReturnType<PlanRepository['findById']>>,
-    )
+    const mockRepo = makeMockRepo(basePlan as Awaited<ReturnType<PlanRepository['findById']>>)
     const service = createPlanService(mockRepo as PlanRepository)
 
     const result = await service.updatePlan('plan-1', 'user-1', { status: 'COMPLETED' })

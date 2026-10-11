@@ -26,9 +26,7 @@ export function PlanList({ onCreateClick }: PlanListProps) {
         icon={ClipboardList}
         title="No study plans yet"
         description="Create your first long-term study plan to start tracking your progress."
-        action={
-          <Button onClick={onCreateClick}>Create Plan</Button>
-        }
+        action={<Button onClick={onCreateClick}>Create Plan</Button>}
       />
     )
   }

@@ -127,7 +127,7 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
                   disabled={updatePlan.isPending}
                   title="Archive plan"
                 >
-                  <Archive className="h-4 w-4 text-muted-foreground" /> Archive
+                  <Archive className="text-muted-foreground h-4 w-4" /> Archive
                 </Button>
                 <Button
                   variant="outline"
@@ -136,7 +136,7 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
                   disabled={updatePlan.isPending}
                   title="Cancel plan"
                 >
-                  <XCircle className="h-4 w-4 text-destructive" /> Cancel
+                  <XCircle className="text-destructive h-4 w-4" /> Cancel
                 </Button>
               </>
             ) : (
@@ -160,50 +160,32 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
       {/* Progress Bars */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="rounded-lg border p-4">
-          <ProgressBar
-            value={progress.timeProgressPercent}
-            label="Time Progress"
-            size="lg"
-          />
+          <ProgressBar value={progress.timeProgressPercent} label="Time Progress" size="lg" />
           <p className="text-muted-foreground mt-2 text-center text-xs">
-            {progress.elapsedDays} of {progress.totalDays} days elapsed ({Math.round(progress.timeProgressPercent)}%)
+            {progress.elapsedDays} of {progress.totalDays} days elapsed (
+            {Math.round(progress.timeProgressPercent)}%)
           </p>
         </div>
         <div className="rounded-lg border p-4">
-          <ProgressBar
-            value={progress.studyProgressPercent}
-            label="Study Progress"
-            size="lg"
-          />
+          <ProgressBar value={progress.studyProgressPercent} label="Study Progress" size="lg" />
           <p className="text-muted-foreground mt-2 text-center text-xs">
-            {progress.actualFormatted} of {progress.targetFormatted} completed ({Math.round(progress.studyProgressPercent)}%)
+            {progress.actualFormatted} of {progress.targetFormatted} completed (
+            {Math.round(progress.studyProgressPercent)}%)
           </p>
         </div>
       </div>
 
       {/* Study Stats Grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard
-          icon={Target}
-          label="Target"
-          value={progress.targetFormatted}
-        />
+        <StatCard icon={Target} label="Target" value={progress.targetFormatted} />
         <StatCard
           icon={TrendingUp}
           label="Completed"
           value={progress.actualFormatted}
           highlight={progress.isOverTarget}
         />
-        <StatCard
-          icon={Clock}
-          label="Remaining"
-          value={progress.remainingFormatted}
-        />
-        <StatCard
-          icon={Calendar}
-          label="Days Left"
-          value={String(progress.remainingDays)}
-        />
+        <StatCard icon={Clock} label="Remaining" value={progress.remainingFormatted} />
+        <StatCard icon={Calendar} label="Days Left" value={String(progress.remainingDays)} />
       </div>
 
       {/* Plan Details Info */}
@@ -216,12 +198,8 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
           <Detail label="Elapsed Days" value={String(progress.elapsedDays)} />
           <Detail label="Remaining Days" value={String(progress.remainingDays)} />
           <Detail label="Time Elapsed" value={`${Math.round(progress.timeProgressPercent)}%`} />
-          {currentMilestone && (
-            <Detail label="Current Milestone" value={currentMilestone.title} />
-          )}
-          {nextMilestone && (
-            <Detail label="Next Milestone" value={nextMilestone.title} />
-          )}
+          {currentMilestone && <Detail label="Current Milestone" value={currentMilestone.title} />}
+          {nextMilestone && <Detail label="Next Milestone" value={nextMilestone.title} />}
         </div>
       </div>
 
@@ -235,7 +213,9 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
               onClick={() => setTab('total')}
               className={cn(
                 'rounded px-2.5 py-1 font-medium transition-colors',
-                tab === 'total' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                tab === 'total'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
               Total Plan
@@ -244,7 +224,9 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
               onClick={() => setTab('milestones')}
               className={cn(
                 'rounded px-2.5 py-1 font-medium transition-colors',
-                tab === 'milestones' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                tab === 'milestones'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
               Milestone
@@ -253,7 +235,9 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
               onClick={() => setTab('monthly')}
               className={cn(
                 'rounded px-2.5 py-1 font-medium transition-colors',
-                tab === 'monthly' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                tab === 'monthly'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
               Monthly
@@ -262,7 +246,9 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
               onClick={() => setTab('weekly')}
               className={cn(
                 'rounded px-2.5 py-1 font-medium transition-colors',
-                tab === 'weekly' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                tab === 'weekly'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
               Weekly
@@ -292,7 +278,9 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
           {tab === 'milestones' && (
             <>
               {milestones.length === 0 ? (
-                <p className="text-muted-foreground py-3 text-center text-xs">No milestones defined.</p>
+                <p className="text-muted-foreground py-3 text-center text-xs">
+                  No milestones defined.
+                </p>
               ) : (
                 milestones.map((m) => (
                   <ComparisonRowGrid
@@ -309,11 +297,7 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
           {tab === 'monthly' && (
             <>
               {monthlyProgress.length === 0 ? (
-                <ComparisonRowGrid
-                  label="Current Month"
-                  target={monthlyTargetMinutes}
-                  actual={0}
-                />
+                <ComparisonRowGrid label="Current Month" target={monthlyTargetMinutes} actual={0} />
               ) : (
                 monthlyProgress.map((mp) => (
                   <ComparisonRowGrid
@@ -330,11 +314,7 @@ export function PlanDetailView({ planId }: PlanDetailViewProps) {
           {tab === 'weekly' && (
             <>
               {weeklyProgress.length === 0 ? (
-                <ComparisonRowGrid
-                  label="Current Week"
-                  target={weeklyTargetMinutes}
-                  actual={0}
-                />
+                <ComparisonRowGrid label="Current Week" target={weeklyTargetMinutes} actual={0} />
               ) : (
                 weeklyProgress.map((wp) => (
                   <ComparisonRowGrid
@@ -445,7 +425,7 @@ function ComparisonRowGrid({
         className={cn(
           'col-span-2 text-right tabular-nums',
           diff > 0
-            ? 'text-green-600 dark:text-green-400 font-medium'
+            ? 'font-medium text-green-600 dark:text-green-400'
             : diff < 0
               ? 'text-orange-600 dark:text-orange-400'
               : 'text-muted-foreground',

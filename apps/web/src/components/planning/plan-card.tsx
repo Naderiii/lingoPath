@@ -70,11 +70,7 @@ export function PlanCard({ plan }: PlanCardProps) {
       </div>
 
       <div className="mt-3">
-        <ProgressBar
-          value={plan.studyProgressPercent}
-          label="Study Progress"
-          size="sm"
-        />
+        <ProgressBar value={plan.studyProgressPercent} label="Study Progress" size="sm" />
       </div>
     </Link>
   )

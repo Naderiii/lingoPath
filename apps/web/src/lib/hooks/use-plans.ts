@@ -301,12 +301,24 @@ export function getPlanStatusDisplay(status: PlanStatus): {
 } {
   switch (status) {
     case 'ACTIVE':
-      return { label: 'Active', className: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' }
+      return {
+        label: 'Active',
+        className: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
+      }
     case 'COMPLETED':
-      return { label: 'Completed', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' }
+      return {
+        label: 'Completed',
+        className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+      }
     case 'ARCHIVED':
-      return { label: 'Archived', className: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400' }
+      return {
+        label: 'Archived',
+        className: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400',
+      }
     case 'CANCELLED':
-      return { label: 'Cancelled', className: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' }
+      return {
+        label: 'Cancelled',
+        className: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
+      }
   }
 }

@@ -317,7 +317,12 @@ export function createPlanService(repository: PlanRepository) {
       const totalDays = computeTotalDays(plan.startDate, plan.endDate, timezone)
       const elapsedDays = computeElapsedDays(plan.startDate, now, timezone)
       const remainingDays = computeRemainingDays(plan.endDate, now, timezone)
-      const timeProgressPercent = computeTimeProgressPercent(plan.startDate, plan.endDate, now, timezone)
+      const timeProgressPercent = computeTimeProgressPercent(
+        plan.startDate,
+        plan.endDate,
+        now,
+        timezone,
+      )
       const remainingMinutes = Math.max(0, plan.targetMinutes - actualMinutes)
       const studyProgressPercent =
         plan.targetMinutes > 0
@@ -351,12 +356,8 @@ export function createPlanService(repository: PlanRepository) {
         const mRemainingDays = computeRemainingDays(m.endDate, now, timezone)
 
         const isCurrent =
-          !foundCurrent &&
-          m.status === 'ACTIVE' &&
-          now >= m.startDate &&
-          now <= m.endDate
-        const isNext =
-          !foundCurrent && !isCurrent && m.status === 'ACTIVE' && now < m.startDate
+          !foundCurrent && m.status === 'ACTIVE' && now >= m.startDate && now <= m.endDate
+        const isNext = !foundCurrent && !isCurrent && m.status === 'ACTIVE' && now < m.startDate
 
         if (isCurrent) foundCurrent = true
 

@@ -63,18 +63,15 @@ export default async function planRoutes(app: FastifyInstance) {
   })
 
   // POST /api/v1/plans/:planId/milestones
-  app.post<{ Params: { planId: string } }>(
-    '/plans/:planId/milestones',
-    async (request, reply) => {
-      const body = CreatePlanMilestoneSchema.parse(request.body)
-      const milestone = await planService.createMilestone(
-        request.params.planId,
-        DEFAULT_USER_ID,
-        body,
-      )
-      return reply.status(201).send(milestone)
-    },
-  )
+  app.post<{ Params: { planId: string } }>('/plans/:planId/milestones', async (request, reply) => {
+    const body = CreatePlanMilestoneSchema.parse(request.body)
+    const milestone = await planService.createMilestone(
+      request.params.planId,
+      DEFAULT_USER_ID,
+      body,
+    )
+    return reply.status(201).send(milestone)
+  })
 
   // PUT /api/v1/milestones/:id
   app.put<{ Params: { id: string } }>('/milestones/:id', async (request, _reply) => {

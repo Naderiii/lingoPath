@@ -32,7 +32,9 @@ export function MilestoneList({ milestones, planId }: MilestoneListProps) {
     <div className="space-y-3">
       {milestones.map((ms) => {
         const remaining = computeRemainingDaysClient(ms.endDate)
-        const statusDisplay = getPlanStatusDisplay(ms.status as 'ACTIVE' | 'COMPLETED' | 'ARCHIVED' | 'CANCELLED')
+        const statusDisplay = getPlanStatusDisplay(
+          ms.status as 'ACTIVE' | 'COMPLETED' | 'ARCHIVED' | 'CANCELLED',
+        )
 
         return (
           <div
@@ -46,12 +48,8 @@ export function MilestoneList({ milestones, planId }: MilestoneListProps) {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  {ms.isCurrent && (
-                    <Star className="text-primary h-4 w-4 shrink-0 fill-current" />
-                  )}
-                  {ms.isNext && (
-                    <ArrowRight className="h-4 w-4 shrink-0 text-blue-500" />
-                  )}
+                  {ms.isCurrent && <Star className="text-primary h-4 w-4 shrink-0 fill-current" />}
+                  {ms.isNext && <ArrowRight className="h-4 w-4 shrink-0 text-blue-500" />}
                   <h4 className="font-medium">{ms.title}</h4>
                   <span
                     className={cn(
@@ -76,9 +74,7 @@ export function MilestoneList({ milestones, planId }: MilestoneListProps) {
                 variant="ghost"
                 size="icon"
                 className="text-muted-foreground hover:text-destructive h-8 w-8 shrink-0"
-                onClick={() =>
-                  void deleteMilestone.mutateAsync({ id: ms.milestoneId, planId })
-                }
+                onClick={() => void deleteMilestone.mutateAsync({ id: ms.milestoneId, planId })}
                 disabled={deleteMilestone.isPending}
                 aria-label="Delete milestone"
               >
@@ -88,12 +84,14 @@ export function MilestoneList({ milestones, planId }: MilestoneListProps) {
 
             <div className="text-muted-foreground mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
               <span>
-                {new Date(ms.startDate).toLocaleDateString()} – {new Date(ms.endDate).toLocaleDateString()}
+                {new Date(ms.startDate).toLocaleDateString()} –{' '}
+                {new Date(ms.endDate).toLocaleDateString()}
               </span>
               <span>{remaining} days left</span>
               <span>Target: {formatMinutesDisplay(ms.targetMinutes)}</span>
               <span>
-                Done: {formatMinutesDisplay(ms.actualMinutes)} / {formatMinutesDisplay(ms.targetMinutes)}
+                Done: {formatMinutesDisplay(ms.actualMinutes)} /{' '}
+                {formatMinutesDisplay(ms.targetMinutes)}
               </span>
             </div>
 
