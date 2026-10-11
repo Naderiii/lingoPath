@@ -2,7 +2,7 @@
 
 > _Your English learning path, measured._
 
-LingoPath is an English learning planning, tracking, and analytics system. It provides goal-driven language learners with a framework to design structured long-term study plans (e.g., 6-Month IELTS Preparation, TOEFL strategies, or General English fluency), organize multi-stage milestones, track real study sessions, and monitor planned versus actual progress over time.
+LingoPath is an English learning planning, tracking, and analytics system. It provides goal-driven language learners with a framework to design structured long-term study plans (e.g., 6-Month IELTS Preparation, TOEFL strategies, or General English fluency), organize multi-stage milestones, track real study sessions via a persistent live timer or manual entry, and monitor planned versus actual progress over time.
 
 ---
 
@@ -31,6 +31,7 @@ LingoPath is an English learning planning, tracking, and analytics system. It pr
 Self-directed language learners often struggle with long-term consistency, milestone pacing, and realistic progress measurement. LingoPath solves this by uniting long-term preparation timelines with granular day-to-day study tracking:
 
 - **Target-Driven Roadmaps**: Define long-term plans with target study hours, calendar horizons, and structured milestones.
+- **Persistent Study Timer & Live Tracking**: Start, pause, resume, and stop study sessions with local persistence that survives page refreshes, accidental navigation, and browser restarts.
 - **Accurate Real-Time Accounting**: Study progress is derived strictly from real `StudySession` records—no manual progress increments or vanity numbers.
 - **Timezone-Aware Countdown Engine**: Pacing, elapsed time, and remaining days are calculated dynamically using the user's local timezone, accounting for midnight boundaries, month lengths, leap years, and daylight saving time (DST) shifts.
 - **Multi-Granular Comparisons**: Evaluate planned targets against actual achievements at the total plan, milestone, monthly, and weekly levels.
@@ -53,13 +54,20 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Dynamic Identification**: Automatically detects and surfaces the _Current Milestone_ and _Next Milestone_ relative to today's date.
 - **Individual Milestone Tracking**: Track target vs. actual minutes and completion rates for each milestone.
 
-### 3. Study Session Accounting
+### 3. Study Session Accounting & Timer
 
-- **Verified Durations**: Session duration is calculated from explicit start and end UTC timestamps with sanity bounds.
-- **Taxonomy & Skills**: Categorize study time across 8 core domains: Vocabulary, Grammar, Listening, Reading, Writing, Speaking, Pronunciation, and Conversation.
-- **Attribution & Audit Trail**: Sessions associate with plans and milestones without double-counting.
+- **Persistent Live Timer**: Start, pause, resume, and stop timer sessions. Survives refreshes, tab switching, and navigation via local storage persistence. Timestamp-based elapsed calculation without frequent network polls.
+- **Duplicate Prevention**: Unique stop tokens prevent accidental duplicate session creation on retries, double-clicks, or refreshes.
+- **Manual Quick-Add Entry**: Record study sessions manually with duration, skill, category, topic, notes, self-rating (1-5), and date/time.
+- **Verified Durations**: Session duration is calculated from explicit start and end UTC timestamps with sanity bounds (1 minute to 16 hours).
+- **Taxonomy & Skills**: Categorize study time across core English learning domains: Vocabulary, Grammar, Listening, Reading, Writing, Speaking, Pronunciation, and Conversation.
 
-### 4. Learning Objectives & Goals
+### 4. Study History & Filtering
+
+- **History Management**: Comprehensive `/study/history` view supporting cursor-based pagination, date-range filtering, skill filtering, category filtering, search across topics and notes, and multi-field sorting.
+- **Editing & Deletion**: Update or delete past sessions with inline modals and confirmation dialogs, automatically invalidating dependent queries and progress calculations.
+
+### 5. Learning Objectives & Goals
 
 - **Exam & Custom Objectives**: Support for IELTS, TOEFL, General English, Immigration, and custom learning targets with target scores and deadlines.
 - **Recurring Goals**: Daily, weekly, monthly, and yearly study goals per skill domain.
@@ -176,7 +184,7 @@ lingoPath/
 │   │   │   │   ├── health/      # Health check probes
 │   │   │   │   ├── objectives/  # Learning objectives
 │   │   │   │   ├── plans/       # Long-term plans & milestone services
-│   │   │   │   ├── sessions/    # Study session recording
+│   │   │   │   ├── sessions/    # Study session recording & timer stats
 │   │   │   │   └── skills/      # Skill taxonomy
 │   │   │   ├── plugins/         # Fastify plugins (Prisma, CORS, Helmet, errors)
 │   │   │   ├── shared/          # Centralized error classes & utilities
@@ -194,13 +202,14 @@ lingoPath/
 │       │   │       ├── dashboard/
 │       │   │       ├── goals/
 │       │   │       ├── planning/ # Long-Term Plan views (/planning, /planning/[id])
-│       │   │       └── study/
+│       │   │       └── study/    # Study tracking, live timer (/study, /study/timer, /study/history)
 │       │   ├── components/      # UI components
 │       │   │   ├── layout/      # Sidebar, top-bar, navigation
 │       │   │   ├── planning/    # Plan cards, lists, details, progress bars, dialogs
+│       │   │   ├── study/       # Study timer, quick-add modal, stats, today sessions
 │       │   │   ├── shared/      # Empty, loading, and error states
 │       │   │   └── ui/          # Radix UI primitives & buttons
-│       │   └── lib/             # API client, React Query hooks, utilities
+│       │   └── lib/             # API client, React Query hooks (use-sessions, use-study-timer), utilities
 │       └── public/              # Static assets
 │
 ├── packages/
@@ -285,6 +294,8 @@ Set up the required environment files across the project:
 3. Push the database schema and seed the initial skills and default user:
    ```bash
    pnpm --filter @lingopath/api db:push
+   ```
+   ```bash
    pnpm --filter @lingopath/api db:seed
    ```
 
@@ -342,15 +353,16 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 | `PUT` / `PATCH` | `/api/v1/milestones/:id`           | Update milestone details                |
 | `DELETE`        | `/api/v1/milestones/:id`           | Delete a milestone                      |
 
-### Study Sessions (`/api/v1/sessions`)
+### Study Sessions & Timer Stats (`/api/v1/sessions`)
 
-| Method   | Endpoint               | Description                                                 |
-| -------- | ---------------------- | ----------------------------------------------------------- |
-| `GET`    | `/api/v1/sessions`     | List sessions with cursor pagination and date/skill filters |
-| `POST`   | `/api/v1/sessions`     | Record a new study session                                  |
-| `GET`    | `/api/v1/sessions/:id` | Get details of a single session                             |
-| `PUT`    | `/api/v1/sessions/:id` | Update a session entry                                      |
-| `DELETE` | `/api/v1/sessions/:id` | Remove a session entry                                      |
+| Method   | Endpoint                  | Description                                                                 |
+| -------- | ------------------------- | --------------------------------------------------------------------------- |
+| `GET`    | `/api/v1/sessions`        | List sessions with cursor pagination, search, sorting, and date/skill filters |
+| `GET`    | `/api/v1/sessions/today-stats` | Get today's study time, daily target, remaining time, streak, and sessions |
+| `POST`   | `/api/v1/sessions`        | Record a new study session (manual or timer)                                |
+| `GET`    | `/api/v1/sessions/:id`    | Get details of a single session                                             |
+| `PUT`    | `/api/v1/sessions/:id`    | Update a session entry                                                      |
+| `DELETE` | `/api/v1/sessions/:id`    | Remove a session entry                                                      |
 
 ### Goals & Taxonomy
 
@@ -371,3 +383,4 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 3. **No Double-Counting**: Explicit milestone attribution takes priority. Unassigned sessions under a plan are mapped to non-overlapping milestone date ranges, ensuring total plan time equals the exact sum of verified study hours.
 4. **Decoupled Architecture**: Strict separation of concerns between HTTP routes, business services, and database repositories prevents leaky abstractions and simplifies testing.
 5. **Zero Data Loss on State Changes**: Archiving or cancelling plans or milestones never deletes historical study sessions.
+6. **Robust Local-First Timer Persistence**: Timer state persists locally across browser refreshes, tab switches, and accidental navigations using timestamp calculations without hammering backend endpoints every second. Duplicate-prevention tokens guarantee exactly one session is created upon stopping.

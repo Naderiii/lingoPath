@@ -52,6 +52,23 @@ export function createSessionService(repository: SessionRepository) {
       }
     },
 
+    async getTodayStats(userId: string, timezone: string) {
+      const { todaySessions, totalMinutes } = await repository.getTodayStats(userId, timezone)
+      const streak = await repository.getStreak(userId, timezone)
+
+      // Default daily target: 60 minutes (would come from user's active DAILY goal)
+      const dailyTargetMinutes = 60
+      const remainingMinutes = Math.max(0, dailyTargetMinutes - totalMinutes)
+
+      return {
+        todayTotalMinutes: totalMinutes,
+        dailyTargetMinutes,
+        remainingMinutes,
+        streak,
+        sessions: todaySessions,
+      }
+    },
+
     async getSessionById(id: string, userId: string) {
       const session = await repository.findById(id, userId)
       if (!session) throw new NotFoundError('StudySession', id)

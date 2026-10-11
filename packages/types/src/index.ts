@@ -159,6 +159,9 @@ export const ListStudySessionsQuerySchema = z.object({
   planId: z.string().uuid().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
+  search: z.string().max(200).optional(),
+  sortBy: z.enum(['startedAt', 'durationMinutes', 'createdAt']).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
 })
 
 export type ListStudySessionsQuery = z.infer<typeof ListStudySessionsQuerySchema>

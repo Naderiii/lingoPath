@@ -8,10 +8,16 @@ import {
 } from '@lingopath/types'
 
 // Phase 1: single user, identity resolved from config
-const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001'
+const DEFAULT_USER_ID = '[CARD_REDACTED]-[CARD_REDACTED]'
+const DEFAULT_TIMEZONE = 'UTC'
 
 export default async function sessionRoutes(app: FastifyInstance) {
   const sessionService = createSessionService(createSessionRepository(app.prisma))
+
+  // GET /api/v1/sessions/today-stats
+  app.get('/sessions/today-stats', async (_request, _reply) => {
+    return sessionService.getTodayStats(DEFAULT_USER_ID, DEFAULT_TIMEZONE)
+  })
 
   // GET /api/v1/sessions
   app.get('/sessions', async (request, _reply) => {
