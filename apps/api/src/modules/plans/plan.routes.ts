@@ -25,6 +25,11 @@ export default async function planRoutes(app: FastifyInstance) {
     return planService.getPlanById(request.params.id, DEFAULT_USER_ID)
   })
 
+  // GET /api/v1/plans/:id/progress — consolidated detail with progress from StudySession data
+  app.get<{ Params: { id: string } }>('/plans/:id/progress', async (request, _reply) => {
+    return planService.getPlanProgress(request.params.id, DEFAULT_USER_ID)
+  })
+
   // POST /api/v1/plans
   app.post('/plans', async (request, reply) => {
     const body = CreateLongTermPlanSchema.parse(request.body)
@@ -38,6 +43,12 @@ export default async function planRoutes(app: FastifyInstance) {
     return planService.updatePlan(request.params.id, DEFAULT_USER_ID, body)
   })
 
+  // PATCH /api/v1/plans/:id
+  app.patch<{ Params: { id: string } }>('/plans/:id', async (request, _reply) => {
+    const body = UpdateLongTermPlanSchema.parse(request.body)
+    return planService.updatePlan(request.params.id, DEFAULT_USER_ID, body)
+  })
+
   // DELETE /api/v1/plans/:id
   app.delete<{ Params: { id: string } }>('/plans/:id', async (request, reply) => {
     await planService.deletePlan(request.params.id, DEFAULT_USER_ID)
@@ -45,6 +56,11 @@ export default async function planRoutes(app: FastifyInstance) {
   })
 
   // ─── Milestones ────────────────────────────────────────────────────────────
+
+  // GET /api/v1/plans/:planId/milestones
+  app.get<{ Params: { planId: string } }>('/plans/:planId/milestones', async (request, _reply) => {
+    return planService.listMilestones(request.params.planId, DEFAULT_USER_ID)
+  })
 
   // POST /api/v1/plans/:planId/milestones
   app.post<{ Params: { planId: string } }>('/plans/:planId/milestones', async (request, reply) => {
@@ -59,6 +75,12 @@ export default async function planRoutes(app: FastifyInstance) {
 
   // PUT /api/v1/milestones/:id
   app.put<{ Params: { id: string } }>('/milestones/:id', async (request, _reply) => {
+    const body = UpdatePlanMilestoneSchema.parse(request.body)
+    return planService.updateMilestone(request.params.id, DEFAULT_USER_ID, body)
+  })
+
+  // PATCH /api/v1/milestones/:id
+  app.patch<{ Params: { id: string } }>('/milestones/:id', async (request, _reply) => {
     const body = UpdatePlanMilestoneSchema.parse(request.body)
     return planService.updateMilestone(request.params.id, DEFAULT_USER_ID, body)
   })
