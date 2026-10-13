@@ -113,6 +113,65 @@ export function createGoalRepository(prisma: PrismaClient) {
     delete(id: string, _userId: string) {
       return prisma.goal.delete({ where: { id } })
     },
+
+    async calculateProgress(goalId: string, userId: string) {
+      const goal = await prisma.goal.findFirst({
+        where: { id: goalId, userId },
+        include: { skillTargets: { include: { skill: true } } },
+      })
+
+      if (!goal) {
+        return null
+      }
+
+      // Query study sessions within goal date range
+      const sessions = await prisma.studySession.findMany({
+        where: {
+          userId,
+          startedAt: {
+            gte: goal.startDate,
+            ...(goal.endDate ? { lte: goal.endDate } : {}),
+          },
+          ...(goal.planId ? { planId: goal.planId } : {}),
+        },
+        include: { skill: true },
+      })
+
+      // Calculate total actual minutes
+      const actualMinutes = sessions.reduce((sum, session) => sum + session.durationMinutes, 0)
+
+      // Calculate per-skill actual minutes
+      const skillProgress: Record<string, { targetMinutes: number; actualMinutes: number; skill: { id: string; name: string } }> = {}
+
+      if (goal.skillTargets.length > 0) {
+        goal.skillTargets.forEach((target) => {
+          skillProgress[target.skillId] = {
+            targetMinutes: target.targetMinutes,
+            actualMinutes: 0,
+            skill: { id: target.skill.id, name: target.skill.name },
+          }
+        })
+
+        sessions.forEach((session) => {
+          if (skillProgress[session.skillId]) {
+            skillProgress[session.skillId]!.actualMinutes += session.durationMinutes
+          }
+        })
+      }
+
+      const targetMinutes = goal.targetMinutes
+      const remainingMinutes = Math.max(0, targetMinutes - actualMinutes)
+      const percentage = targetMinutes > 0 ? Math.round((actualMinutes / targetMinutes) * 100) : 0
+
+      return {
+        targetMinutes,
+        actualMinutes,
+        remainingMinutes,
+        percentage,
+        status: actualMinutes >= targetMinutes ? 'completed' : actualMinutes > 0 ? 'in_progress' : 'not_started',
+        skillProgress: Object.values(skillProgress),
+      }
+    },
   }
 }
 
