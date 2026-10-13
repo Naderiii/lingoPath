@@ -11,11 +11,23 @@ export default async function goalRoutes(app: FastifyInstance) {
   // GET /api/v1/goals
   app.get('/goals', async (request, _reply) => {
     const query = ListGoalsQuerySchema.parse(request.query)
+    const includeProgress =
+      (request.query as Record<string, unknown>).includeProgress === 'true'
+    
+    if (includeProgress) {
+      return goalService.listGoalsWithProgress(DEFAULT_USER_ID, query)
+    }
     return goalService.listGoals(DEFAULT_USER_ID, query)
   })
 
   // GET /api/v1/goals/:id
   app.get<{ Params: { id: string } }>('/goals/:id', async (request, _reply) => {
+    const includeProgress =
+      (request.query as Record<string, unknown>).includeProgress === 'true'
+    
+    if (includeProgress) {
+      return goalService.getGoalWithProgress(request.params.id, DEFAULT_USER_ID)
+    }
     return goalService.getGoalById(request.params.id, DEFAULT_USER_ID)
   })
 

@@ -67,10 +67,19 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **History Management**: Comprehensive `/study/history` view supporting cursor-based pagination, date-range filtering, skill filtering, category filtering, search across topics and notes, and multi-field sorting.
 - **Editing & Deletion**: Update or delete past sessions with inline modals and confirmation dialogs, automatically invalidating dependent queries and progress calculations.
 
-### 5. Learning Objectives & Goals
+### 5. Goals & Short-Term Planning
+
+- **Period-Based Goals**: Create daily, weekly, monthly, and yearly study time targets with automatic period boundary calculation (e.g., Monday-to-Sunday weeks, full calendar months).
+- **Real-Time Progress Tracking**: Goal progress computed live from actual `StudySession` data—shows target, actual, remaining time, and completion percentage.
+- **Skill Distribution Targets**: Optionally allocate target study time across specific skills (e.g., Listening: 2h, Reading: 2h, Writing: 2h) with individual progress tracking per skill.
+- **Over-Target Achievement Display**: When actual study exceeds target, progress bars cap at 100% visually while displaying true values (e.g., "12h 30m / 10h").
+- **Long-Term Plan Integration**: Goals can be linked to active long-term plans, with progress automatically filtered to plan-specific study sessions.
+- **Comprehensive Goal Management**: Create, view, edit, delete goals with period and active/inactive filters in a dedicated `/goals` interface.
+
+### 6. Learning Objectives & Exam Tracking
 
 - **Exam & Custom Objectives**: Support for IELTS, TOEFL, General English, Immigration, and custom learning targets with target scores and deadlines.
-- **Recurring Goals**: Daily, weekly, monthly, and yearly study goals per skill domain.
+- **Exam Scheduling**: Plan and track exam dates, venues, and registration status.
 
 ---
 
@@ -200,16 +209,17 @@ lingoPath/
 │       │   │       ├── analytics/
 │       │   │       ├── calendar/
 │       │   │       ├── dashboard/
-│       │   │       ├── goals/
+│       │   │       ├── goals/    # Goal tracking & management (/goals)
 │       │   │       ├── planning/ # Long-Term Plan views (/planning, /planning/[id])
 │       │   │       └── study/    # Study tracking, live timer (/study, /study/timer, /study/history)
 │       │   ├── components/      # UI components
+│       │   │   ├── goals/       # Goal cards, lists, creation/detail dialogs, progress displays
 │       │   │   ├── layout/      # Sidebar, top-bar, navigation
 │       │   │   ├── planning/    # Plan cards, lists, details, progress bars, dialogs
 │       │   │   ├── study/       # Study timer, quick-add modal, stats, today sessions
 │       │   │   ├── shared/      # Empty, loading, and error states
 │       │   │   └── ui/          # Radix UI primitives & buttons
-│       │   └── lib/             # API client, React Query hooks (use-sessions, use-study-timer), utilities
+│       │   └── lib/             # API client, React Query hooks (use-goals, use-sessions, use-plans, use-study-timer), utilities
 │       └── public/              # Static assets
 │
 ├── packages/
@@ -366,13 +376,16 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 
 ### Goals & Taxonomy
 
-| Method | Endpoint             | Description                                           |
-| ------ | -------------------- | ----------------------------------------------------- |
-| `GET`  | `/api/v1/goals`      | List recurring goals (daily, weekly, monthly, yearly) |
-| `POST` | `/api/v1/goals`      | Create a recurring study goal with skill allocations  |
-| `GET`  | `/api/v1/skills`     | List available skill taxonomy domains                 |
-| `GET`  | `/api/v1/categories` | List default and user-defined study categories        |
-| `GET`  | `/api/v1/objectives` | List learning objectives (IELTS, TOEFL, etc.)         |
+| Method          | Endpoint             | Description                                                                        |
+| --------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `GET`           | `/api/v1/goals`      | List goals (supports period filter, active filter, and `?includeProgress=true`)    |
+| `POST`          | `/api/v1/goals`      | Create a new goal with optional skill distribution targets and plan linkage        |
+| `GET`           | `/api/v1/goals/:id`  | Get goal details (supports `?includeProgress=true` for calculated progress)        |
+| `PUT` / `PATCH` | `/api/v1/goals/:id`  | Update goal configuration (period, target, dates, skill targets, plan link)        |
+| `DELETE`        | `/api/v1/goals/:id`  | Delete a goal                                                                      |
+| `GET`           | `/api/v1/skills`     | List available skill taxonomy domains                                              |
+| `GET`           | `/api/v1/categories` | List default and user-defined study categories                                     |
+| `GET`           | `/api/v1/objectives` | List learning objectives (IELTS, TOEFL, etc.)                                      |
 
 ---
 

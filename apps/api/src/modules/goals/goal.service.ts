@@ -39,6 +39,34 @@ export function createGoalService(repository: GoalRepository) {
       return goal
     },
 
+    async getGoalWithProgress(id: string, userId: string) {
+      const goal = await repository.findById(id, userId)
+      if (!goal) throw new NotFoundError('Goal', id)
+
+      const progress = await repository.calculateProgress(id, userId)
+      return { ...goal, progress }
+    },
+
+    async listGoalsWithProgress(userId: string, query: ListGoalsQuery) {
+      const result = await repository.findMany(userId, query)
+      
+      const goalsWithProgress = await Promise.all(
+        result.items.map(async (goal) => {
+          const progress = await repository.calculateProgress(goal.id, userId)
+          return { ...goal, progress }
+        })
+      )
+
+      return {
+        data: goalsWithProgress,
+        meta: {
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+          limit: query.limit,
+        },
+      }
+    },
+
     async createGoal(userId: string, data: CreateGoal) {
       validateGoalDates(data.startDate, data.endDate)
       return repository.create(userId, data)

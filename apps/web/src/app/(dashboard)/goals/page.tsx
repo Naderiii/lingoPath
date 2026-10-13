@@ -1,18 +1,12 @@
 import type { Metadata } from 'next'
-import { Target } from 'lucide-react'
-import { PlaceholderPage } from '@/components/shared/placeholder-page'
+import { GoalsPageClient } from '@/components/goals/goals-page-client'
 
 export const metadata: Metadata = {
-  title: 'Goals',
+  title: 'Goals | LingoPath',
+  description:
+    'Set and track your study targets. Monitor progress toward daily, weekly, monthly, and yearly goals.',
 }
 
 export default function GoalsPage() {
-  return (
-    <PlaceholderPage
-      title="Goals"
-      description="Set daily, weekly, monthly, and yearly study targets per skill. Track progress toward each goal."
-      icon={Target}
-      phase={2}
-    />
-  )
+  return <GoalsPageClient />
 }
