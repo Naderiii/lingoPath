@@ -13,6 +13,7 @@ import planRoutes from './modules/plans/plan.routes.js'
 import goalRoutes from './modules/goals/goal.routes.js'
 import assessmentRoutes from './modules/assessments/assessment.routes.js'
 import examRoutes from './modules/exams/exam.routes.js'
+import dashboardRoutes from './modules/dashboard/dashboard.routes.js'
 
 export async function buildApp() {
   const loggerConfig =
@@ -68,6 +69,7 @@ export async function buildApp() {
       await v1.register(goalRoutes)
       await v1.register(assessmentRoutes)
       await v1.register(examRoutes)
+      await v1.register(dashboardRoutes, { prefix: '/dashboard' })
     },
     { prefix: '/api/v1' },
   )
