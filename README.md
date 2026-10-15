@@ -81,6 +81,11 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Exam & Custom Objectives**: Support for IELTS, TOEFL, General English, Immigration, and custom learning targets with target scores and deadlines.
 - **Exam Scheduling**: Plan and track exam dates, venues, and registration status.
 
+### 7. Consolidated Main Dashboard
+
+- **Real-Time Overview**: Single consolidated dashboard API and view at `/dashboard` bringing together today's study progress, active long-term plan, goals, weekly breakdown, skill distribution, monthly/yearly trends, and recent study activity.
+- **Robust States**: Graceful loading, error handling, and helpful empty states guiding new users to start their first session or create their first plan.
+
 ---
 
 ## System Architecture
@@ -378,6 +383,7 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 
 | Method          | Endpoint             | Description                                                                        |
 | --------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `GET`           | `/api/v1/dashboard`  | Consolidated endpoint returning full dashboard overview (today, plan, goals, week) |
 | `GET`           | `/api/v1/goals`      | List goals (supports period filter, active filter, and `?includeProgress=true`)    |
 | `POST`          | `/api/v1/goals`      | Create a new goal with optional skill distribution targets and plan linkage        |
 | `GET`           | `/api/v1/goals/:id`  | Get goal details (supports `?includeProgress=true` for calculated progress)        |
