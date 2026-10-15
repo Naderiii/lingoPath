@@ -18,7 +18,11 @@ const config: Config = {
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
+          hover: 'hsl(var(--primary-hover))',
         },
+        surface: 'hsl(var(--surface))',
+        'warm-border': 'hsl(var(--warm-border))',
+        'accent-tint': 'hsl(var(--accent-tint))',
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
           foreground: 'hsl(var(--secondary-foreground))',
