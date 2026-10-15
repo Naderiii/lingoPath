@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@prisma/client'
 import { computeRemainingDays, formatMinutes } from '../plans/plan.service.js'
+import { createPrismaStreakReader } from '../calendar/calendar.service.js'
+import { dayBoundsUtc, getDayKey } from '../../shared/timezone.js'
 
 interface DashboardRepository {
   getTodayStats(userId: string, timezone: string): Promise<{
@@ -121,81 +123,48 @@ interface DashboardRepository {
 }
 
 export function createDashboardRepository(prisma: PrismaClient): DashboardRepository {
+  // Streaks are never computed here: the calendar module owns that rule and this
+  // reader is the only entry point to it (Phase 7).
+  const readStreak = createPrismaStreakReader(prisma)
+
   return {
     async getTodayStats(userId: string, timezone: string) {
       const now = new Date()
-      const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      })
-      const todayStr = formatter.format(now) // YYYY-MM-DD in user's timezone
+      // Half-open UTC window for "today in the user's timezone".
+      const { start, end } = dayBoundsUtc(getDayKey(now, timezone), timezone)
 
-      // Build UTC start/end for today in user's timezone
-      const todayStart = new Date(`${todayStr}T00:00:00`)
-      const todayEnd = new Date(`${todayStr}T23:59:59.999`)
-      const offsetMs = todayStart.getTime() - new Date(`${todayStr}T00:00:00Z`).getTime()
-      const utcStart = new Date(todayStart.getTime() - offsetMs)
-      const utcEnd = new Date(todayEnd.getTime() - offsetMs)
-
-      const todaySessions = await prisma.studySession.findMany({
-        where: {
-          userId,
-          startedAt: { gte: utcStart, lte: utcEnd },
-        },
-        include: { skill: true, category: true },
-        orderBy: { startedAt: 'desc' },
-      })
-
-      const totalMinutes = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0)
-
-      // Get active daily goal valid for today
-      const dailyGoal = await prisma.goal.findFirst({
-        where: {
-          userId,
-          period: 'DAILY',
-          isActive: true,
-          startDate: { lte: now },
-          OR: [{ endDate: null }, { endDate: { gte: now } }],
-        },
-        orderBy: { startDate: 'desc' },
-      })
-
-      const dailyTargetMinutes = dailyGoal?.targetMinutes ?? 60
-      const remainingMinutes = Math.max(0, dailyTargetMinutes - totalMinutes)
-
-      // Calculate streak using UTC day boundaries (consistent with existing session.repository)
-      let streak = 0
-      let currentDate = new Date(formatter.format(now))
-
-      for (let i = 0; i < 365; i++) {
-        const dateStr = currentDate.toISOString().split('T')[0]!
-        const dayStart = new Date(`${dateStr}T00:00:00Z`)
-        const dayEnd = new Date(`${dateStr}T23:59:59.999Z`)
-
-        const count = await prisma.studySession.count({
+      const [todaySessions, dailyGoal, streak] = await Promise.all([
+        prisma.studySession.findMany({
           where: {
             userId,
-            startedAt: { gte: dayStart, lte: dayEnd },
+            startedAt: { gte: start, lt: end },
           },
-        })
+          include: { skill: true, category: true },
+          orderBy: { startedAt: 'desc' },
+        }),
+        prisma.goal.findFirst({
+          where: {
+            userId,
+            period: 'DAILY',
+            isActive: true,
+            startDate: { lte: now },
+            OR: [{ endDate: null }, { endDate: { gte: now } }],
+          },
+          orderBy: { startDate: 'desc' },
+        }),
+        readStreak(userId, timezone),
+      ])
 
-        if (count > 0) {
-          streak++
-        } else if (i > 0) {
-          break
-        }
-
-        currentDate = new Date(currentDate.getTime() - 86400000)
-      }
+      const totalMinutes = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0)
+      const dailyTargetMinutes = dailyGoal?.targetMinutes ?? 60
+      const remainingMinutes = Math.max(0, dailyTargetMinutes - totalMinutes)
 
       return {
         todayTotalMinutes: totalMinutes,
         dailyTargetMinutes,
         remainingMinutes,
         hasDailyGoal: dailyGoal !== null,
-        streak,
+        streak: streak.currentStreak,
         sessions: todaySessions,
       }
     },

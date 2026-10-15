@@ -57,6 +57,12 @@ export interface TodayStatsResponse {
   dailyTargetMinutes: number
   remainingMinutes: number
   streak: number
+  /** Phase 7: the canonical streak reader also reports the longest run and the rule. */
+  longestStreak?: number
+  streakQualifyingMinutes?: number
+  todayQualified?: boolean
+  todayPending?: boolean
+  minutesToQualifyToday?: number
   sessions: StudySessionItem[]
 }
 

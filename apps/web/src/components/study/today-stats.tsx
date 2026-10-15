@@ -24,9 +24,18 @@ export function TodayStats() {
   const targetMinutes = data?.dailyTargetMinutes ?? 60
   const remainingMinutes = data?.remainingMinutes ?? 60
   const streak = data?.streak ?? 0
+  const qualifyingMinutes = data?.streakQualifyingMinutes ?? 20
+  const longestStreak = data?.longestStreak ?? 0
   const progressPercent = Math.min(100, Math.round((todayMinutes / targetMinutes) * 100))
 
-  const stats = [
+  const stats: Array<{
+    label: string
+    value: string
+    icon: typeof Clock
+    color: string
+    bgColor: string
+    hint?: string
+  }> = [
     {
       label: "Today's Study Time",
       value: formatDuration(todayMinutes),
@@ -60,6 +69,7 @@ export function TodayStats() {
       icon: Flame,
       color: streak > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400',
       bgColor: streak > 0 ? 'bg-red-50 dark:bg-red-900/20' : 'bg-gray-50 dark:bg-gray-900/20',
+      hint: `Longest ${longestStreak} day${longestStreak !== 1 ? 's' : ''} · counts at ${qualifyingMinutes}m`,
     },
   ]
 
@@ -75,6 +85,7 @@ export function TodayStats() {
               <span className="text-muted-foreground text-xs font-medium">{stat.label}</span>
             </div>
             <p className="mt-2 text-2xl font-bold">{stat.value}</p>
+            {stat.hint && <p className="text-muted-foreground mt-1 text-xs">{stat.hint}</p>}
           </div>
         ))}
       </div>

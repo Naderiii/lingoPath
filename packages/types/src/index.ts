@@ -435,6 +435,186 @@ export const ListExamsQuerySchema = z.object({
 
 export type ListExamsQuery = z.infer<typeof ListExamsQuerySchema>
 
+// ─── Study Calendar & Streaks ────────────────────────────────────────────────
+//
+// Contracts for the Phase 7 calendar heatmap, day drill-down, and streaks.
+//
+// These are deliberately *type-only* declarations: the runtime validation schemas
+// for the calendar module live next to its routes in `apps/api` so that API unit
+// tests never depend on this package's build output. The single source of truth
+// for both the heatmap buckets and the streak rule is the API module
+// `apps/api/src/modules/calendar/calendar.domain.ts`.
+
+/** How the requested calendar window was resolved from the request. */
+export type CalendarRangeKind = 'CURRENT_YEAR' | 'PREVIOUS_YEAR' | 'CUSTOM'
+
+export interface CalendarRange {
+  kind: CalendarRangeKind
+  /** Inclusive first day, `YYYY-MM-DD`, expressed in the user's timezone. */
+  from: string
+  /** Inclusive last day, `YYYY-MM-DD`, expressed in the user's timezone. */
+  to: string
+  /** Calendar year when the range came from a year selector, else `null`. */
+  year: number | null
+}
+
+/**
+ * One cell of the heatmap. `intensity` is `0` for a day with no study and
+ * `1..intensityThresholds.length + 1` otherwise, so the scale grows with the
+ * configured thresholds.
+ */
+export interface CalendarDay {
+  date: string
+  totalMinutes: number
+  sessionCount: number
+  intensity: number
+  /** `totalMinutes >= streakQualifyingMinutes` (and never true for zero minutes). */
+  qualified: boolean
+}
+
+/** Human-readable definition of one intensity bucket, produced by the server. */
+export interface CalendarIntensityLevel {
+  level: number
+  minMinutes: number
+  maxMinutes: number | null
+  label: string
+}
+
+export interface CalendarRangeSummary {
+  totalMinutes: number
+  sessionCount: number
+  activeDays: number
+  qualifyingDays: number
+  /** Rounded mean over days that have at least one minute of study. */
+  averageMinutesPerActiveDay: number
+  bestDay: { date: string; totalMinutes: number } | null
+}
+
+export interface CalendarResponse {
+  range: CalendarRange
+  timezone: string
+  /** Bucket upper bounds; level `i` covers `(thresholds[i-1], thresholds[i]]`. */
+  intensityThresholds: number[]
+  /** Highest intensity level a day can reach with the current thresholds. */
+  maxIntensityLevel: number
+  /** Legend-ready bucket definitions (`0`, `1–20 min`, … `91+ min`). */
+  intensityLevels: CalendarIntensityLevel[]
+  streakQualifyingMinutes: number
+  /** Today in the user's timezone — drives the "today" ring in the UI. */
+  today: string
+  days: CalendarDay[]
+  summary: CalendarRangeSummary
+}
+
+export interface CalendarBreakdownSkill {
+  skillId: string
+  name: string
+  minutes: number
+  sessionCount: number
+  percentage: number
+}
+
+export interface CalendarBreakdownCategory {
+  categoryId: string | null
+  name: string
+  minutes: number
+  sessionCount: number
+  percentage: number
+}
+
+export interface CalendarBreakdownTopic {
+  topic: string
+  minutes: number
+  sessionCount: number
+  percentage: number
+}
+
+export interface CalendarDaySession {
+  id: string
+  startedAt: string
+  endedAt: string
+  durationMinutes: number
+  skillId: string
+  skillName: string
+  categoryId: string | null
+  categoryName: string | null
+  topic: string | null
+  description: string | null
+  notes: string | null
+  selfRating: number | null
+  isManual: boolean
+  planId: string | null
+  planTitle: string | null
+  milestoneId: string | null
+  milestoneTitle: string | null
+}
+
+export interface CalendarDayNote {
+  sessionId: string
+  topic: string | null
+  notes: string
+  durationMinutes: number
+  startedAt: string
+}
+
+/** Payload for clicking a single heatmap day. */
+export interface CalendarDayDetailResponse {
+  date: string
+  timezone: string
+  totalMinutes: number
+  sessionCount: number
+  intensity: number
+  qualified: boolean
+  streakQualifyingMinutes: number
+  intensityThresholds: number[]
+  /** Local time (`HH:mm`) of the first and last session of the day. */
+  firstSessionLocalTime: string | null
+  lastSessionLocalTime: string | null
+  skills: CalendarBreakdownSkill[]
+  categories: CalendarBreakdownCategory[]
+  topics: CalendarBreakdownTopic[]
+  /** Sessions that carry free-text notes, newest first. */
+  notes: CalendarDayNote[]
+  sessions: CalendarDaySession[]
+}
+
+export interface StreakSummaryResponse {
+  timezone: string
+  qualifyingMinutes: number
+  currentStreak: number
+  longestStreak: number
+  currentStreakStart: string | null
+  currentStreakEnd: string | null
+  longestStreakStart: string | null
+  longestStreakEnd: string | null
+  today: string
+  todayMinutes: number
+  todayQualified: boolean
+  /** True when today is not qualified yet but the streak is still alive. */
+  todayPending: boolean
+  lastQualifiedDate: string | null
+  totalQualifiedDays: number
+  /** Minutes still needed for today to count, `0` once it qualifies. */
+  minutesToQualifyToday: number
+}
+
+export interface CalendarSettingsResponse {
+  timezone: string
+  /** Today in the user's timezone — lets the UI default its range without guessing. */
+  today: string
+  intensityThresholds: number[]
+  intensityLevels: CalendarIntensityLevel[]
+  streakQualifyingMinutes: number
+  /** `USER` when a stored preference exists, `DEFAULT` when built-ins apply. */
+  source: 'USER' | 'DEFAULT'
+  updatedAt: string | null
+}
+
+export interface UpdateCalendarSettingsInput {
+  intensityThresholds?: number[]
+  streakQualifyingMinutes?: number
+}
+
 // ─── Health Response ─────────────────────────────────────────────────────────
 
 export interface HealthResponse {

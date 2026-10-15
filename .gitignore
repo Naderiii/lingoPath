@@ -39,3 +39,6 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Agent scratch
+.zwork/

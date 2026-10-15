@@ -86,6 +86,15 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Real-Time Overview**: Single consolidated dashboard API and view at `/dashboard` bringing together today's study progress, active long-term plan, goals, weekly breakdown, skill distribution, monthly/yearly trends, and recent study activity.
 - **Robust States**: Graceful loading, error handling, and helpful empty states guiding new users to start their first session or create their first plan.
 
+### 8. Study Calendar & Streaks
+
+- **GitHub-Style Heatmap**: A `/calendar` view of daily study activity as week-by-week columns, colour-coded by how long you studied.
+- **Flexible Ranges**: Current year, previous year, or any custom range up to two years.
+- **Configurable Intensity Scale**: The default scale is `0 | 1-20 | 21-40 | 41-60 | 61-90 | 90+` minutes; bounds are editable per user and persist.
+- **Day Drill-Down**: Clicking a day shows total study time, session count, first-last session times, per-skill / per-category / per-topic distribution, free-text notes, and every single session.
+- **Timezone-Correct Streaks**: Current and longest streak, computed in the user's timezone with a configurable qualifying threshold (20 minutes by default). Multiple short sessions on one day add up.
+- **Boundary-Proof**: Midnights, DST transitions (23- and 25-hour days), month ends, year ends and leap days are all covered by tests; missed days break the run, a day still in progress never does.
+
 ---
 
 ## System Architecture
@@ -192,6 +201,7 @@ lingoPath/
 │   │   ├── src/
 │   │   │   ├── modules/         # Domain modules
 │   │   │   │   ├── assessments/ # CEFR level evaluation
+│   │   │   │   ├── calendar/    # Study calendar heatmap, day drill-down & streaks
 │   │   │   │   ├── categories/  # Session category management
 │   │   │   │   ├── exams/       # Exam & mock test tracking
 │   │   │   │   ├── goals/       # Recurring goal engine
@@ -212,13 +222,14 @@ lingoPath/
 │       │   ├── app/             # App Router pages and route groups
 │       │   │   └── (dashboard)/ # Authenticated dashboard views
 │       │   │       ├── analytics/
-│       │   │       ├── calendar/
+│       │   │       ├── calendar/ # Study heatmap, streaks & day detail (/calendar)
 │       │   │       ├── dashboard/
 │       │   │       ├── goals/    # Goal tracking & management (/goals)
 │       │   │       ├── planning/ # Long-Term Plan views (/planning, /planning/[id])
 │       │   │       └── study/    # Study tracking, live timer (/study, /study/timer, /study/history)
 │       │   ├── components/      # UI components
 │       │   │   ├── goals/       # Goal cards, lists, creation/detail dialogs, progress displays
+│       │   │   ├── calendar/    # Heatmap grid, streak cards, day detail & threshold dialogs
 │       │   │   ├── layout/      # Sidebar, top-bar, navigation
 │       │   │   ├── planning/    # Plan cards, lists, details, progress bars, dialogs
 │       │   │   ├── study/       # Study timer, quick-add modal, stats, today sessions
@@ -310,6 +321,10 @@ Set up the required environment files across the project:
    ```bash
    pnpm --filter @lingopath/api db:push
    ```
+
+   This also creates the `calendar_settings` table that stores the per-user heatmap
+   thresholds and the streak rule used by the calendar.
+
    ```bash
    pnpm --filter @lingopath/api db:seed
    ```
@@ -395,6 +410,18 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 
 ---
 
+### Study Calendar & Streaks (`/api/v1/calendar`, `/api/v1/streak`)
+
+| Method | Endpoint                     | Description                                                                                        |
+| ------ | ---------------------------- | -------------------------------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/calendar`           | Heatmap payload for `?year=YYYY` (current year by default) or `?from=YYYY-MM-DD&to=YYYY-MM-DD`      |
+| `GET`  | `/api/v1/calendar/day/:date` | Day drill-down: totals, skills, categories, topics, notes and individual sessions                   |
+| `GET`  | `/api/v1/calendar/settings`  | Effective thresholds, streak rule and timezone (`USER` or `DEFAULT`)                                |
+| `PUT`  | `/api/v1/calendar/settings`  | Persist `intensityThresholds` and/or `streakQualifyingMinutes`                                      |
+| `GET`  | `/api/v1/streak`             | Current and longest streak plus today's standing                                                    |
+
+These endpoints also accept the optional query overrides `?timezone=`, `?intensityThresholds=20,40,60,90` and `?streakQualifyingMinutes=20`.
+
 ## Architecture Principles
 
 1. **`StudySession` as Single Source of Truth**: All progress metrics, streaks, completed hours, and milestone achievements are computed directly from real session logs. Progress totals are never stored as static editable numbers.
@@ -403,3 +430,16 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 4. **Decoupled Architecture**: Strict separation of concerns between HTTP routes, business services, and database repositories prevents leaky abstractions and simplifies testing.
 5. **Zero Data Loss on State Changes**: Archiving or cancelling plans or milestones never deletes historical study sessions.
 6. **Robust Local-First Timer Persistence**: Timer state persists locally across browser refreshes, tab switches, and accidental navigations using timestamp calculations without hammering backend endpoints every second. Duplicate-prevention tokens guarantee exactly one session is created upon stopping.
+
+7. **One Definition of a Streak**: Daily totals, heatmap intensity and streaks are always derived from `StudySession` rows by a single pure module (`apps/api/src/modules/calendar/calendar.domain.ts`). Nothing is cached or persisted, so no second source of truth can drift; the calendar, the study page and the dashboard all read the same reader. Day boundaries come from one DST-aware utility (`apps/api/src/shared/timezone.ts`) instead of per-module offset arithmetic.
+
+---
+
+## Study Calendar & Streak Rules
+
+- **Day ownership**: a session belongs to the local day its `startedAt` falls on, even when it runs past midnight, so a session is never split or double-counted.
+- **Qualifying day**: the day's total minutes must reach the configured threshold (20 minutes by default). Several short sessions add up; one long session still counts once.
+- **Current streak**: includes today when today qualifies. While today is still in progress the streak keeps counting through yesterday (surfaced as `todayPending`) and only breaks once a whole day is missed.
+- **Longest streak**: the best run over the whole history, earliest run winning ties.
+- **Intensity buckets**: default `0 | 1-20 | 21-40 | 41-60 | 61-90 | 90+` minutes, configurable per user (up to seven bounds). The UI legend always comes from the server, so screen and data cannot disagree.
+- **Timezones**: everything is stored in UTC and reported in the user's configured timezone. 23-hour and 25-hour DST days, skipped local midnights and date-line skips are handled by the timezone utility and covered by `apps/api/tests/timezone.test.ts`.
