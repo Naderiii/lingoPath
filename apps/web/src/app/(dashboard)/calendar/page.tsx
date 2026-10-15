@@ -1,18 +1,12 @@
 import type { Metadata } from 'next'
-import { CalendarDays } from 'lucide-react'
-import { PlaceholderPage } from '@/components/shared/placeholder-page'
+import { CalendarPageClient } from '@/components/calendar/calendar-page-client'
 
 export const metadata: Metadata = {
-  title: 'Calendar',
+  title: 'Calendar | LingoPath',
+  description:
+    'See your study history as a GitHub-style heatmap, track your current and longest streak, and drill into any day.',
 }
 
 export default function CalendarPage() {
-  return (
-    <PlaceholderPage
-      title="Calendar"
-      description="View your study sessions on a calendar. See daily, weekly, and monthly study patterns."
-      icon={CalendarDays}
-      phase={2}
-    />
-  )
+  return <CalendarPageClient />
 }

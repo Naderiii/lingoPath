@@ -78,6 +78,7 @@ model User {
   goals            Goal[]
   levelAssessments LevelAssessment[]
   exams            Exam[]
+  calendarSettings CalendarSetting?
 
   @@map("users")
 }
@@ -147,6 +148,26 @@ model StudySession {
   @@index([userId, categoryId])
   @@index([startedAt, endedAt])
   @@map("study_sessions")
+}
+
+// ─── Calendar Preferences (Phase 7) ──────────────────────────────────────────
+//
+// Thresholds that *interpret* study activity — how the heatmap buckets minutes
+// and what makes a day qualify for the streak. Note what is deliberately absent:
+// daily totals and streak counters are never stored. They are derived from
+// `StudySession` rows on read, so study time keeps exactly one source of truth.
+
+model CalendarSetting {
+  id                      String   @id @default(uuid())
+  userId                  String   @unique
+  intensityThresholds     Int[]    @default([20, 40, 60, 90])
+  streakQualifyingMinutes Int      @default(20)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("calendar_settings")
 }
 
 // ─── Learning Objectives ─────────────────────────────────────────────────────

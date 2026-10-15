@@ -1,4 +1,5 @@
 import type { SessionRepository } from './session.repository.js'
+import type { StreakReader } from '../calendar/calendar.service.js'
 import type {
   CreateStudySession,
   UpdateStudySession,
@@ -38,7 +39,16 @@ function validateSessionTimes(startedAt: string, endedAt: string): void {
   }
 }
 
-export function createSessionService(repository: SessionRepository) {
+export interface SessionServiceDeps {
+  /**
+   * Canonical streak reader (Phase 7). Injected rather than reimplemented: the
+   * calendar module owns the only streak rules and day-boundary arithmetic in
+   * the codebase, and `StudySession` stays the only place study time lives.
+   */
+  getStreak: StreakReader
+}
+
+export function createSessionService(repository: SessionRepository, deps: SessionServiceDeps) {
   return {
     async listSessions(userId: string, query: ListStudySessionsQuery) {
       const result = await repository.findMany(userId, query)
@@ -53,8 +63,10 @@ export function createSessionService(repository: SessionRepository) {
     },
 
     async getTodayStats(userId: string, timezone: string) {
-      const { todaySessions, totalMinutes } = await repository.getTodayStats(userId, timezone)
-      const streak = await repository.getStreak(userId, timezone)
+      const [{ todaySessions, totalMinutes }, streak] = await Promise.all([
+        repository.getTodayStats(userId, timezone),
+        deps.getStreak(userId, timezone),
+      ])
 
       // Default daily target: 60 minutes (would come from user's active DAILY goal)
       const dailyTargetMinutes = 60
@@ -64,7 +76,12 @@ export function createSessionService(repository: SessionRepository) {
         todayTotalMinutes: totalMinutes,
         dailyTargetMinutes,
         remainingMinutes,
-        streak,
+        streak: streak.currentStreak,
+        longestStreak: streak.longestStreak,
+        streakQualifyingMinutes: streak.qualifyingMinutes,
+        todayQualified: streak.todayQualified,
+        todayPending: streak.todayPending,
+        minutesToQualifyToday: streak.minutesToQualifyToday,
         sessions: todaySessions,
       }
     },
