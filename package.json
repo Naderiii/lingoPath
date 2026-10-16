@@ -1,6 +1,6 @@
 {
   "name": "lingopath",
-  "version": "0.0.2",
+  "version": "0.0.8",
   "private": true,
   "scripts": {
     "dev": "turbo run dev",

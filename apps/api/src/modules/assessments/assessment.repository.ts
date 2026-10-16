@@ -1,17 +1,32 @@
 import type { PrismaClient } from '@prisma/client'
 import type { ListLevelAssessmentsQuery, CreateLevelAssessment } from '@lingopath/types'
+import { keysetOrderBy, keysetWhere } from '../../shared/keyset-pagination.js'
 
 export function createAssessmentRepository(prisma: PrismaClient) {
   return {
     async findMany(userId: string, query: ListLevelAssessmentsQuery) {
       const { cursor, limit } = query
 
+      const cursorWhere = await keysetWhere({
+        cursor,
+        field: 'assessedAt',
+        direction: 'desc',
+        loadCursorValue: async () => {
+          if (!cursor) return null
+          const row = await prisma.levelAssessment.findFirst({
+            where: { id: cursor, userId },
+            select: { assessedAt: true },
+          })
+          return row?.assessedAt ?? null
+        },
+      })
+
       const assessments = await prisma.levelAssessment.findMany({
         where: {
           userId,
-          ...(cursor ? { id: { lt: cursor } } : {}),
+          ...(cursorWhere ?? {}),
         },
-        orderBy: { assessedAt: 'desc' },
+        orderBy: keysetOrderBy('assessedAt', 'desc'),
         take: limit + 1,
       })
 

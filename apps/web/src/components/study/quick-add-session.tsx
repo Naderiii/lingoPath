@@ -17,7 +17,17 @@ import {
   useCategories,
   formatDuration,
 } from '@/lib/hooks/use-sessions'
+import { formatDayKey } from '@/lib/calendar'
 import { cn } from '@/lib/utils'
+
+/**
+ * Today in the browser's local calendar (not the UTC day) — the API expects a
+ * local day key, and a UTC day key is off by one for most of the world.
+ */
+function localDayKey(): string {
+  const now = new Date()
+  return formatDayKey(now.getFullYear(), now.getMonth() + 1, now.getDate())
+}
 
 interface QuickAddSessionProps {
   onSuccess?: () => void
@@ -36,10 +46,7 @@ export function QuickAddSession({ onSuccess }: QuickAddSessionProps) {
   const [selfRating, setSelfRating] = useState<number | null>(null)
   const [durationHours, setDurationHours] = useState(0)
   const [durationMinutes, setDurationMinutes] = useState(30)
-  const [date, setDate] = useState(() => {
-    const now = new Date()
-    return now.toISOString().split('T')[0]!
-  })
+  const [date, setDate] = useState(() => localDayKey())
   const [time, setTime] = useState(() => {
     const now = new Date()
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
@@ -56,7 +63,7 @@ export function QuickAddSession({ onSuccess }: QuickAddSessionProps) {
     setDurationMinutes(30)
     setError(null)
     const now = new Date()
-    setDate(now.toISOString().split('T')[0]!)
+    setDate(localDayKey())
     setTime(
       `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
     )
@@ -186,7 +193,9 @@ export function QuickAddSession({ onSuccess }: QuickAddSessionProps) {
 
           {/* Duration */}
           <div>
-            <label className="text-sm font-medium">Duration * ({formatDuration(totalMinutes)})</label>
+            <label className="text-sm font-medium">
+              Duration * ({formatDuration(totalMinutes)})
+            </label>
             <div className="mt-1 flex gap-3">
               <div className="flex-1">
                 <label className="text-muted-foreground text-xs" htmlFor="qa-hours">

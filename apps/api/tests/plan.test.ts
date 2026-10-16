@@ -666,7 +666,7 @@ describe('Plan service - progress computation', () => {
     const mockRepo: Partial<PlanRepository> = {
       findById: async () => plan as Awaited<ReturnType<PlanRepository['findById']>>,
       getActualMinutesForPlan: async () => 0,
-      getActualMinutesByMilestone: async () => [],
+      getActualMinutesByMilestone: async () => ({ milestones: [], unassignedMinutes: 0 }),
       getWeeklyActualMinutes: async () => [],
       getMonthlyActualMinutes: async () => [],
     }
@@ -702,7 +702,7 @@ describe('Plan service - progress computation', () => {
     const mockRepo: Partial<PlanRepository> = {
       findById: async () => plan as Awaited<ReturnType<PlanRepository['findById']>>,
       getActualMinutesForPlan: async () => 150,
-      getActualMinutesByMilestone: async () => [],
+      getActualMinutesByMilestone: async () => ({ milestones: [], unassignedMinutes: 0 }),
       getWeeklyActualMinutes: async () => [],
       getMonthlyActualMinutes: async () => [],
     }
@@ -793,10 +793,13 @@ describe('Plan service - progress computation', () => {
     const mockRepo: Partial<PlanRepository> = {
       findById: async () => plan as unknown as Awaited<ReturnType<PlanRepository['findById']>>,
       getActualMinutesForPlan: async () => 4360,
-      getActualMinutesByMilestone: async () => [
-        { milestoneId: 'ms-1', totalMinutes: 2800 },
-        { milestoneId: 'ms-2', totalMinutes: 1560 },
-      ],
+      getActualMinutesByMilestone: async () => ({
+        milestones: [
+          { milestoneId: 'ms-1', totalMinutes: 2800 },
+          { milestoneId: 'ms-2', totalMinutes: 1560 },
+        ],
+        unassignedMinutes: 0,
+      }),
       getWeeklyActualMinutes: async () => [],
       getMonthlyActualMinutes: async () => [],
     }
@@ -835,6 +838,10 @@ describe('Plan service - progress computation', () => {
 
       expect(result.progress.actualMinutes).toBe(4360)
       expect(result.progress.actualFormatted).toBe('72h 40m')
+      // The breakdown must add up: milestones + unassigned = plan total.
+      expect(result.progress.unassignedMinutes).toBe(0)
+      const milestoneSum = result.milestones.reduce((sum, m) => sum + m.actualMinutes, 0)
+      expect(milestoneSum + result.progress.unassignedMinutes).toBe(result.progress.actualMinutes)
     } finally {
       globalThis.Date = originalDate
     }

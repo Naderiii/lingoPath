@@ -1,10 +1,29 @@
 import type { PrismaClient } from '@prisma/client'
-import { computeRemainingDays, formatMinutes } from '../plans/plan.service.js'
+import {
+  computeRemainingDays,
+  computeStudyProgressPercent,
+  formatMinutes,
+} from '../plans/plan.service.js'
 import { createPrismaStreakReader } from '../calendar/calendar.service.js'
-import { dayBoundsUtc, getDayKey } from '../../shared/timezone.js'
+import { resolveGoalProgressWindow } from '../goals/goal-periods.js'
+import {
+  addDaysToDayKey,
+  dayBoundsUtc,
+  daysInMonth,
+  endOfYearDayKey,
+  formatDayKey,
+  getDayKey,
+  getDayKeyYear,
+  getWeekdayIndex,
+  parseDayKey,
+  startOfYearDayKey,
+} from '../../shared/timezone.js'
 
 interface DashboardRepository {
-  getTodayStats(userId: string, timezone: string): Promise<{
+  getTodayStats(
+    userId: string,
+    timezone: string,
+  ): Promise<{
     todayTotalMinutes: number
     dailyTargetMinutes: number
     remainingMinutes: number
@@ -21,7 +40,10 @@ interface DashboardRepository {
       category: { id: string; name: string } | null
     }>
   }>
-  getActivePlan(userId: string, timezone: string): Promise<{
+  getActivePlan(
+    userId: string,
+    timezone: string,
+  ): Promise<{
     plan: {
       id: string
       title: string
@@ -62,7 +84,10 @@ interface DashboardRepository {
       description: string | null
     } | null
   } | null>
-  getActiveGoals(userId: string, timezone: string): Promise<
+  getActiveGoals(
+    userId: string,
+    timezone: string,
+  ): Promise<
     Array<{
       id: string
       period: string
@@ -73,7 +98,10 @@ interface DashboardRepository {
       status: 'completed' | 'in_progress' | 'not_started'
     }>
   >
-  getWeekStats(userId: string, timezone: string): Promise<{
+  getWeekStats(
+    userId: string,
+    timezone: string,
+  ): Promise<{
     weekStart: string
     weekEnd: string
     targetMinutes: number
@@ -84,7 +112,10 @@ interface DashboardRepository {
       minutes: number
     }>
   }>
-  getSkillDistribution(userId: string): Promise<
+  getSkillDistribution(
+    userId: string,
+    timezone: string,
+  ): Promise<
     Array<{
       skillId: string
       skillName: string
@@ -92,18 +123,14 @@ interface DashboardRepository {
       percentage: number
     }>
   >
-  getMonthlyProgress(userId: string): Promise<
-    Array<{
-      month: string
-      totalMinutes: number
-    }>
-  >
-  getYearlyProgress(userId: string): Promise<
-    Array<{
-      month: string
-      totalMinutes: number
-    }>
-  >
+  getMonthlyProgress(
+    userId: string,
+    timezone: string,
+  ): Promise<Array<{ month: string; totalMinutes: number }>>
+  getYearlyProgress(
+    userId: string,
+    timezone: string,
+  ): Promise<Array<{ month: string; totalMinutes: number }>>
   getRecentSessions(
     userId: string,
     limit: number,
@@ -201,10 +228,7 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
       const actualMinutes = result._sum.durationMinutes ?? 0
 
       const remainingMinutes = Math.max(0, plan.targetMinutes - actualMinutes)
-      const studyProgressPercent =
-        plan.targetMinutes > 0
-          ? Math.min(100, Math.round((actualMinutes / plan.targetMinutes) * 10000) / 100)
-          : 0
+      const studyProgressPercent = computeStudyProgressPercent(actualMinutes, plan.targetMinutes)
       const remainingDays = computeRemainingDays(plan.endDate, now, timezone)
 
       // Elapsed days
@@ -248,13 +272,6 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
 
     async getActiveGoals(userId: string, timezone: string) {
       const now = new Date()
-      const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      })
-      const todayStr = formatter.format(now)
 
       // Active goals for relevant periods (DAILY, WEEKLY, MONTHLY)
       const goals = await prisma.goal.findMany({
@@ -272,7 +289,7 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
       if (goals.length === 0) return []
 
       // For each period, keep only the most recent active goal
-      const latestByPeriod = new Map<string, typeof goals[0]>()
+      const latestByPeriod = new Map<string, (typeof goals)[0]>()
       for (const g of goals) {
         if (!latestByPeriod.has(g.period)) {
           latestByPeriod.set(g.period, g)
@@ -282,34 +299,26 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
       const result = []
 
       for (const goal of latestByPeriod.values()) {
-        // Calculate actual minutes within current period window
-        let periodStart: Date
-        let periodEnd: Date = now
-
-        if (goal.period === 'DAILY') {
-          const todayStart = new Date(`${todayStr}T00:00:00`)
-          const offsetMs = todayStart.getTime() - new Date(`${todayStr}T00:00:00Z`).getTime()
-          periodStart = new Date(todayStart.getTime() - offsetMs)
-          periodEnd = new Date(new Date(`${todayStr}T23:59:59.999`).getTime() - offsetMs)
-        } else if (goal.period === 'WEEKLY') {
-          const today = new Date(`${todayStr}T00:00:00Z`)
-          const dayOfWeek = today.getUTCDay()
-          const diff = today.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
-          periodStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), diff))
-          periodEnd = new Date(periodStart.getTime() + 7 * 86400000 - 1)
-        } else {
-          // MONTHLY
-          periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-          periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999))
-        }
-
-        const agg = await prisma.studySession.aggregate({
-          where: {
-            userId,
-            startedAt: { gte: periodStart, lte: periodEnd },
-          },
-          _sum: { durationMinutes: true },
+        // Same period definition as the goals module (goal-periods.ts): the
+        // current local day / Monday-start week / calendar month in the user's
+        // timezone, clipped to the goal's validity range.
+        const window = resolveGoalProgressWindow({
+          period: goal.period,
+          startDate: goal.startDate,
+          endDate: goal.endDate,
+          timeZone: timezone,
+          now,
         })
+
+        const agg = window
+          ? await prisma.studySession.aggregate({
+              where: {
+                userId,
+                startedAt: { gte: window.start, lt: window.end },
+              },
+              _sum: { durationMinutes: true },
+            })
+          : { _sum: { durationMinutes: 0 } }
 
         const actualMinutes = agg._sum.durationMinutes ?? 0
         const targetMinutes = goal.targetMinutes
@@ -339,22 +348,14 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
 
     async getWeekStats(userId: string, timezone: string) {
       const now = new Date()
-      const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      })
+      const todayKey = getDayKey(now, timezone)
 
-      const todayStr = formatter.format(now)
-      const today = new Date(`${todayStr}T00:00:00Z`)
-      const dayOfWeek = today.getUTCDay()
-      const diff = today.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
-      const monday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), diff))
-      const sunday = new Date(monday.getTime() + 7 * 86400000 - 1)
-
-      const weekStart = monday.toISOString().split('T')[0]!
-      const weekEnd = new Date(monday.getTime() + 6 * 86400000).toISOString().split('T')[0]!
+      // Monday-start week in the user's timezone, expressed as day keys so DST
+      // and month/year boundaries cannot shift the window.
+      const weekStartKey = addDaysToDayKey(todayKey, -((getWeekdayIndex(todayKey) + 6) % 7))
+      const weekEndKey = addDaysToDayKey(weekStartKey, 6)
+      const weekStart = dayBoundsUtc(weekStartKey, timezone).start
+      const weekEndExclusive = dayBoundsUtc(addDaysToDayKey(weekEndKey, 1), timezone).start
 
       // Get active weekly goal
       const weeklyGoal = await prisma.goal.findFirst({
@@ -362,8 +363,8 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
           userId,
           period: 'WEEKLY',
           isActive: true,
-          startDate: { lte: sunday },
-          OR: [{ endDate: null }, { endDate: { gte: monday } }],
+          startDate: { lte: weekEndExclusive },
+          OR: [{ endDate: null }, { endDate: { gte: weekStart } }],
         },
         orderBy: { startDate: 'desc' },
       })
@@ -374,21 +375,20 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
       const sessions = await prisma.studySession.findMany({
         where: {
           userId,
-          startedAt: { gte: monday, lte: sunday },
+          startedAt: { gte: weekStart, lt: weekEndExclusive },
         },
         select: { startedAt: true, durationMinutes: true },
       })
 
       const actualMinutes = sessions.reduce((sum, s) => sum + s.durationMinutes, 0)
 
-      // Build daily breakdown map (Mon–Sun)
+      // Build daily breakdown map (Mon–Sun) on the user's local days
       const dailyMap = new Map<string, number>()
       for (let i = 0; i < 7; i++) {
-        const day = new Date(monday.getTime() + i * 86400000)
-        dailyMap.set(day.toISOString().split('T')[0]!, 0)
+        dailyMap.set(addDaysToDayKey(weekStartKey, i), 0)
       }
       for (const s of sessions) {
-        const dayStr = s.startedAt.toISOString().split('T')[0]!
+        const dayStr = getDayKey(s.startedAt, timezone)
         if (dailyMap.has(dayStr)) {
           dailyMap.set(dayStr, (dailyMap.get(dayStr) ?? 0) + s.durationMinutes)
         }
@@ -399,8 +399,8 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
         .map(([date, minutes]) => ({ date, minutes }))
 
       return {
-        weekStart,
-        weekEnd,
+        weekStart: weekStartKey,
+        weekEnd: weekEndKey,
         targetMinutes,
         actualMinutes,
         hasWeeklyGoal: weeklyGoal !== null,
@@ -408,15 +408,18 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
       }
     },
 
-    async getSkillDistribution(userId: string) {
-      // Last 30 days
-      const thirtyDaysAgo = new Date()
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    async getSkillDistribution(userId: string, timezone: string) {
+      // Last 30 local days, ending at the end of today — an upper bound keeps
+      // future-dated sessions out of the distribution, matching `today`.
+      const todayKey = getDayKey(new Date(), timezone)
+      const fromKey = addDaysToDayKey(todayKey, -29)
+      const windowStart = dayBoundsUtc(fromKey, timezone).start
+      const windowEndExclusive = dayBoundsUtc(addDaysToDayKey(todayKey, 1), timezone).start
 
       const sessions = await prisma.studySession.findMany({
         where: {
           userId,
-          startedAt: { gte: thirtyDaysAgo },
+          startedAt: { gte: windowStart, lt: windowEndExclusive },
         },
         include: { skill: true },
       })
@@ -443,17 +446,20 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
         .sort((a, b) => b.totalMinutes - a.totalMinutes)
     },
 
-    async getMonthlyProgress(userId: string) {
-      const now = new Date()
-      const firstDayOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-      const lastDayOfMonth = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999),
-      )
+    async getMonthlyProgress(userId: string, timezone: string) {
+      // Current calendar month in the user's timezone; buckets are local days
+      // (the wire field is still called `month` for contract compatibility).
+      const todayKey = getDayKey(new Date(), timezone)
+      const { year, month } = parseDayKey(todayKey)
+      const monthStartKey = formatDayKey(year, month, 1)
+      const monthEndKey = formatDayKey(year, month, daysInMonth(year, month))
+      const windowStart = dayBoundsUtc(monthStartKey, timezone).start
+      const windowEndExclusive = dayBoundsUtc(addDaysToDayKey(monthEndKey, 1), timezone).start
 
       const sessions = await prisma.studySession.findMany({
         where: {
           userId,
-          startedAt: { gte: firstDayOfMonth, lte: lastDayOfMonth },
+          startedAt: { gte: windowStart, lt: windowEndExclusive },
         },
         select: { startedAt: true, durationMinutes: true },
         orderBy: { startedAt: 'asc' },
@@ -461,7 +467,7 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
 
       const dayMap = new Map<string, number>()
       for (const s of sessions) {
-        const dayStr = s.startedAt.toISOString().split('T')[0]!
+        const dayStr = getDayKey(s.startedAt, timezone)
         dayMap.set(dayStr, (dayMap.get(dayStr) ?? 0) + s.durationMinutes)
       }
 
@@ -470,15 +476,19 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
         .map(([month, totalMinutes]) => ({ month, totalMinutes }))
     },
 
-    async getYearlyProgress(userId: string) {
-      const now = new Date()
-      const firstDayOfYear = new Date(Date.UTC(now.getUTCFullYear(), 0, 1))
-      const lastDayOfYear = new Date(Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999))
+    async getYearlyProgress(userId: string, timezone: string) {
+      // Current calendar year in the user's timezone; buckets are local months.
+      const currentYear = getDayKeyYear(getDayKey(new Date(), timezone))
+      const windowStart = dayBoundsUtc(startOfYearDayKey(currentYear), timezone).start
+      const windowEndExclusive = dayBoundsUtc(
+        addDaysToDayKey(endOfYearDayKey(currentYear), 1),
+        timezone,
+      ).start
 
       const sessions = await prisma.studySession.findMany({
         where: {
           userId,
-          startedAt: { gte: firstDayOfYear, lte: lastDayOfYear },
+          startedAt: { gte: windowStart, lt: windowEndExclusive },
         },
         select: { startedAt: true, durationMinutes: true },
         orderBy: { startedAt: 'asc' },
@@ -486,8 +496,8 @@ export function createDashboardRepository(prisma: PrismaClient): DashboardReposi
 
       const monthMap = new Map<string, number>()
       for (const s of sessions) {
-        const d = new Date(s.startedAt)
-        const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+        // `YYYY-MM` of the session's local day.
+        const key = getDayKey(s.startedAt, timezone).slice(0, 7)
         monthMap.set(key, (monthMap.get(key) ?? 0) + s.durationMinutes)
       }
 
@@ -524,9 +534,9 @@ export function createDashboardService(repository: DashboardRepository) {
         repository.getActivePlan(userId, timezone),
         repository.getActiveGoals(userId, timezone),
         repository.getWeekStats(userId, timezone),
-        repository.getSkillDistribution(userId),
-        repository.getMonthlyProgress(userId),
-        repository.getYearlyProgress(userId),
+        repository.getSkillDistribution(userId, timezone),
+        repository.getMonthlyProgress(userId, timezone),
+        repository.getYearlyProgress(userId, timezone),
         repository.getRecentSessions(userId, 10),
       ])
 

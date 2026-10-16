@@ -1,23 +1,38 @@
 import type { PrismaClient, Prisma } from '@prisma/client'
 import type { ListExamsQuery, CreateExam, UpdateExam, CreateExamResult } from '@lingopath/types'
+import { keysetOrderBy, keysetWhere } from '../../shared/keyset-pagination.js'
 
 export function createExamRepository(prisma: PrismaClient) {
   return {
     async findMany(userId: string, query: ListExamsQuery) {
       const { cursor, limit, status, type } = query
 
+      const cursorWhere = await keysetWhere({
+        cursor,
+        field: 'createdAt',
+        direction: 'desc',
+        loadCursorValue: async () => {
+          if (!cursor) return null
+          const row = await prisma.exam.findFirst({
+            where: { id: cursor, userId },
+            select: { createdAt: true },
+          })
+          return row?.createdAt ?? null
+        },
+      })
+
       const exams = await prisma.exam.findMany({
         where: {
           userId,
           ...(status ? { status } : {}),
           ...(type ? { type } : {}),
-          ...(cursor ? { id: { lt: cursor } } : {}),
+          ...(cursorWhere ?? {}),
         },
         include: {
           objective: true,
           results: { orderBy: { takenAt: 'desc' } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: keysetOrderBy('createdAt', 'desc'),
         take: limit + 1,
       })
 

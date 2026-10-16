@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import type { PrismaClient } from '@prisma/client'
 import type { CalendarRepository } from '../src/modules/calendar/calendar.repository.js'
 import {
   createCalendarService,
   createStreakReader,
 } from '../src/modules/calendar/calendar.service.js'
-import { createSessionRepository } from '../src/modules/sessions/session.repository.js'
 import { createSessionService } from '../src/modules/sessions/session.service.js'
-import { dayBoundsUtc, getDayKey } from '../src/shared/timezone.js'
+import { getDayKey } from '../src/shared/timezone.js'
 
 /**
  * Phase 7 replaced two hand-rolled streak implementations with one canonical
