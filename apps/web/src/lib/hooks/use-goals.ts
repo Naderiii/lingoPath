@@ -217,10 +217,5 @@ export function getGoalStatusDisplay(status: string): {
   }
 }
 
-export function formatMinutesDisplay(minutes: number): string {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  if (h === 0) return `${m}m`
-  if (m === 0) return `${h}h`
-  return `${h}h ${m}m`
-}
+// Re-export from the canonical frontend utility to avoid duplicate implementations.
+export { formatMinutes as formatMinutesDisplay } from '@/lib/calendar'
