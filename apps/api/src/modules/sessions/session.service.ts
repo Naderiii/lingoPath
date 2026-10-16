@@ -10,6 +10,9 @@ import { NotFoundError, ValidationError } from '../../shared/errors.js'
 // Business rule: session must not exceed 16 hours (protection against timer bugs)
 const MAX_SESSION_MINUTES = 16 * 60
 
+/** Documented lower bound: a session is at least one minute of real study time. */
+const MIN_SESSION_MS = 60_000
+
 function computeDurationMinutes(startedAt: string, endedAt: string): number {
   const start = new Date(startedAt).getTime()
   const end = new Date(endedAt).getTime()
@@ -28,15 +31,57 @@ function validateSessionTimes(startedAt: string, endedAt: string): void {
     throw new ValidationError('endedAt must be after startedAt')
   }
 
-  const durationMinutes = computeDurationMinutes(startedAt, endedAt)
-  if (durationMinutes <= 0) {
+  // The minimum is applied to the *elapsed time*, not to the rounded minutes:
+  // otherwise a 30-second session rounds up to a full recorded minute.
+  const elapsedMs = end.getTime() - start.getTime()
+  if (elapsedMs < MIN_SESSION_MS) {
     throw new ValidationError('Session duration must be at least 1 minute')
   }
+
+  const durationMinutes = computeDurationMinutes(startedAt, endedAt)
   if (durationMinutes > MAX_SESSION_MINUTES) {
     throw new ValidationError(
       `Session duration cannot exceed ${MAX_SESSION_MINUTES} minutes (16 hours)`,
     )
   }
+}
+
+/**
+ * Validates the plan/milestone attribution of a session.
+ *
+ * `planId` and `milestoneId` are two independent nullable columns, so without
+ * this check a session can be attributed to a milestone of a *different* plan —
+ * which made one session count toward two plans. The rule enforced here: the
+ * milestone must belong to a plan owned by the user, the explicit plan (when
+ * given) must be that same plan, and a milestone-only session inherits the plan
+ * so every "belongs to plan P" query agrees.
+ */
+async function resolveAttribution(
+  repository: SessionRepository,
+  userId: string,
+  planId: string | null | undefined,
+  milestoneId: string | null | undefined,
+): Promise<{ planId?: string; milestoneId?: string }> {
+  if (milestoneId) {
+    const milestone = await repository.findMilestoneById(milestoneId)
+    if (!milestone || milestone.plan.userId !== userId) {
+      throw new ValidationError(`Milestone '${milestoneId}' not found`)
+    }
+    if (planId && planId !== milestone.planId) {
+      throw new ValidationError('milestoneId does not belong to the given planId')
+    }
+    return { planId: milestone.planId, milestoneId }
+  }
+
+  if (planId) {
+    const plan = await repository.findPlanById(planId, userId)
+    if (!plan) {
+      throw new ValidationError(`Plan '${planId}' not found`)
+    }
+  }
+
+  // Nothing to override: keep whatever the caller provided (undefined = untouched).
+  return {}
 }
 
 export interface SessionServiceDeps {
@@ -94,8 +139,15 @@ export function createSessionService(repository: SessionRepository, deps: Sessio
 
     async createSession(userId: string, data: CreateStudySession) {
       validateSessionTimes(data.startedAt, data.endedAt)
+      const attribution = await resolveAttribution(
+        repository,
+        userId,
+        data.planId,
+        data.milestoneId,
+      )
       const durationMinutes = computeDurationMinutes(data.startedAt, data.endedAt)
-      return repository.create(userId, { ...data, durationMinutes })
+
+      return repository.create(userId, { ...data, ...attribution, durationMinutes })
     },
 
     async updateSession(id: string, userId: string, data: UpdateStudySession) {
@@ -109,7 +161,23 @@ export function createSessionService(repository: SessionRepository, deps: Sessio
         validateSessionTimes(startedAt, endedAt)
       }
 
-      const updateData: UpdateStudySession & { durationMinutes?: number } = { ...data }
+      // Attribution is validated against the effective (post-update) pair, but
+      // only when the caller actually touches it: legacy rows that predate this
+      // rule must stay editable.
+      const attributionChanged = data.planId !== undefined || data.milestoneId !== undefined
+      const attribution = attributionChanged
+        ? await resolveAttribution(
+            repository,
+            userId,
+            data.planId !== undefined ? data.planId : existing.planId,
+            data.milestoneId !== undefined ? data.milestoneId : existing.milestoneId,
+          )
+        : {}
+
+      const updateData: UpdateStudySession & { durationMinutes?: number } = {
+        ...data,
+        ...attribution,
+      }
       if (data.startedAt ?? data.endedAt) {
         updateData.durationMinutes = computeDurationMinutes(startedAt, endedAt)
       }

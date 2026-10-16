@@ -95,6 +95,16 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Timezone-Correct Streaks**: Current and longest streak, computed in the user's timezone with a configurable qualifying threshold (20 minutes by default). Multiple short sessions on one day add up.
 - **Boundary-Proof**: Midnights, DST transitions (23- and 25-hour days), month ends, year ends and leap days are all covered by tests; missed days break the run, a day still in progress never does.
 
+### 9. Study Analytics
+
+- **Consolidated Analytics Page**: `/analytics` for one selected window — 7 / 30 / 90 days, this year, last year, or a custom range up to two years.
+- **Headline Metrics**: total study time, session count, active and inactive days, average daily time, average session length, longest session, current and longest streak, and the share of days that met the daily goal.
+- **Skill Analytics**: time, share, session count, average session length and the recent trend for every skill, with a zero-baseline aware comparison.
+- **Time Trends**: an area chart whose buckets adapt to the range (days, weeks, months).
+- **Period Comparison**: current window against the previous one, reporting an absolute change instead of a misleading infinite percentage when the previous window was empty.
+- **Long-Term Plan Analytics**: planned vs actual, elapsed calendar time vs study progress, a pace verdict with the daily minutes needed to catch up, milestone performance, and monthly and weekly performance.
+- **Database-Side Aggregation**: one grouped SQL query per window (day x skill) plus SQL aggregates for the longest session; the full study history is never loaded into Node.js.
+
 ---
 
 ## System Architecture
@@ -185,7 +195,7 @@ The web application leverages Next.js 14 App Router:
 
 | Layer                  | Technologies                                                                                                          |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Frontend**           | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS, Radix UI, TanStack Query v5, Lucide Icons, `next-themes` |
+| **Frontend**           | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS, Radix UI, TanStack Query v5, Lucide Icons, Recharts, `next-themes` |
 | **Backend**            | Fastify v4, Node.js (>= 20), TypeScript, Zod, `@fastify/cors`, `@fastify/helmet`, Pino Logger                         |
 | **Database & ORM**     | PostgreSQL, Prisma ORM v5                                                                                             |
 | **Tooling & Monorepo** | Turborepo v2, pnpm Workspaces, Vitest, React Testing Library, ESLint, Prettier                                        |
@@ -201,6 +211,7 @@ lingoPath/
 │   │   ├── src/
 │   │   │   ├── modules/         # Domain modules
 │   │   │   │   ├── assessments/ # CEFR level evaluation
+│   │   │   │   ├── analytics/   # Study-time analytics, trends, comparisons & plan pacing
 │   │   │   │   ├── calendar/    # Study calendar heatmap, day drill-down & streaks
 │   │   │   │   ├── categories/  # Session category management
 │   │   │   │   ├── exams/       # Exam & mock test tracking
@@ -231,6 +242,7 @@ lingoPath/
 │       │   │   ├── goals/       # Goal cards, lists, creation/detail dialogs, progress displays
 │       │   │   ├── calendar/    # Heatmap grid, streak cards, day detail & threshold dialogs
 │       │   │   ├── layout/      # Sidebar, top-bar, navigation
+│       │   │   ├── analytics/   # Summary cards, trend/skill charts, comparison & plan pacing
 │       │   │   ├── planning/    # Plan cards, lists, details, progress bars, dialogs
 │       │   │   ├── study/       # Study timer, quick-add modal, stats, today sessions
 │       │   │   ├── shared/      # Empty, loading, and error states
@@ -422,6 +434,17 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 
 These endpoints also accept the optional query overrides `?timezone=`, `?intensityThresholds=20,40,60,90` and `?streakQualifyingMinutes=20`.
 
+
+---
+
+### Analytics (`/api/v1/analytics`)
+
+| Method | Endpoint            | Description                                                                          |
+| ------ | ------------------- | ------------------------------------------------------------------------------------ |
+| `GET`  | `/api/v1/analytics` | Consolidated analytics payload for `?range=7d|30d|90d|current-year|previous-year` or `?range=custom&from=YYYY-MM-DD&to=YYYY-MM-DD` (max 731 days), optional `?timezone=` |
+
+The payload contains `summary`, `skills`, `trends`, `comparison`, `plans` and `goals`. Streaks come from the calendar module, goal progress from the goals module and plan progress from the plans module, so analytics never redefines an existing rule.
+
 ## Architecture Principles
 
 1. **`StudySession` as Single Source of Truth**: All progress metrics, streaks, completed hours, and milestone achievements are computed directly from real session logs. Progress totals are never stored as static editable numbers.
@@ -443,3 +466,5 @@ These endpoints also accept the optional query overrides `?timezone=`, `?intensi
 - **Longest streak**: the best run over the whole history, earliest run winning ties.
 - **Intensity buckets**: default `0 | 1-20 | 21-40 | 41-60 | 61-90 | 90+` minutes, configurable per user (up to seven bounds). The UI legend always comes from the server, so screen and data cannot disagree.
 - **Timezones**: everything is stored in UTC and reported in the user's configured timezone. 23-hour and 25-hour DST days, skipped local midnights and date-line skips are handled by the timezone utility and covered by `apps/api/tests/timezone.test.ts`.
+
+8. **Analytics Aggregate in SQL, Not in Node**: analytics windows are computed by one grouped query (`date_trunc` over `AT TIME ZONE`) plus SQL aggregates, so only a bounded set of (day, skill) rows reaches the application. Percentages use one shared definition (`computeStudyProgressPercent`), and period comparisons report "New" rather than an infinite change when the previous window was empty.

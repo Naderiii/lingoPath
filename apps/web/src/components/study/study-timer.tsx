@@ -4,12 +4,20 @@ import { useState, useCallback } from 'react'
 import { Play, Pause, Square, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useStudyTimer } from '@/lib/hooks/use-study-timer'
-import { useCreateSession, useSkills, useCategories, formatTimerDisplay } from '@/lib/hooks/use-sessions'
+import {
+  useCreateSession,
+  useSkills,
+  useCategories,
+  formatTimerDisplay,
+} from '@/lib/hooks/use-sessions'
 import { cn } from '@/lib/utils'
 
 interface StudyTimerProps {
   onSessionCreated?: () => void
 }
+
+/** Mirrors the server rule: a session records at least one minute of study. */
+const MIN_SESSION_SECONDS = 60
 
 export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
   const timer = useStudyTimer()
@@ -52,7 +60,9 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
     setIsSaving(true)
     setError(null)
 
-    const result = timer.stop()
+    // Snapshot first: the timer keeps running until the session is actually saved,
+    // so a failed request can be retried without losing the session.
+    const result = timer.buildStopResult()
     if (!result) {
       setError('Timer was already stopped or an error occurred.')
       setIsSaving(false)
@@ -71,6 +81,9 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
         isManual: false,
       })
 
+      // Clear the timer only now that the session is persisted.
+      timer.reset()
+
       // Reset form
       setNotes('')
       setTopic('')
@@ -78,7 +91,11 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
       setShowStopForm(false)
       onSessionCreated?.()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save session')
+      setError(
+        err instanceof Error
+          ? `${err.message} — your timer is still running, try saving again.`
+          : 'Failed to save session — your timer is still running, try saving again.',
+      )
     } finally {
       setIsSaving(false)
     }
@@ -91,6 +108,7 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
   }, [timer])
 
   const displaySkill = skills.find((s) => s.id === (timer.skillId ?? selectedSkillId))
+  const canStop = timer.elapsedSeconds >= MIN_SESSION_SECONDS
 
   return (
     <div className="rounded-lg border p-6">
@@ -114,12 +132,15 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
           {formatTimerDisplay(timer.elapsedSeconds)}
         </div>
         {timer.isActive && displaySkill && (
-          <p className="text-muted-foreground mt-2 text-sm">
-            Studying: {displaySkill.name}
-          </p>
+          <p className="text-muted-foreground mt-2 text-sm">Studying: {displaySkill.name}</p>
         )}
         {timer.status === 'paused' && (
           <p className="mt-1 text-sm text-yellow-600 dark:text-yellow-400">Paused</p>
+        )}
+        {timer.isActive && !canStop && (
+          <p className="text-muted-foreground mt-1 text-sm">
+            Sessions under a minute are not saved — keep going.
+          </p>
         )}
       </div>
 
@@ -180,7 +201,14 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
               <Pause className="h-4 w-4" />
               Pause
             </Button>
-            <Button onClick={handleStopClick} variant="destructive" size="lg" className="gap-2">
+            <Button
+              onClick={handleStopClick}
+              variant="destructive"
+              size="lg"
+              className="gap-2"
+              disabled={!canStop}
+              title={canStop ? undefined : 'Study at least 1 minute first'}
+            >
               <Square className="h-4 w-4" />
               Stop
             </Button>
@@ -193,7 +221,14 @@ export function StudyTimer({ onSessionCreated }: StudyTimerProps) {
               <Play className="h-4 w-4" />
               Resume
             </Button>
-            <Button onClick={handleStopClick} variant="destructive" size="lg" className="gap-2">
+            <Button
+              onClick={handleStopClick}
+              variant="destructive"
+              size="lg"
+              className="gap-2"
+              disabled={!canStop}
+              title={canStop ? undefined : 'Study at least 1 minute first'}
+            >
               <Square className="h-4 w-4" />
               Stop
             </Button>

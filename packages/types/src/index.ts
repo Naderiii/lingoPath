@@ -615,6 +615,160 @@ export interface UpdateCalendarSettingsInput {
   streakQualifyingMinutes?: number
 }
 
+// ─── Analytics (Phase 8) ─────────────────────────────────────────────
+//
+// Type-only declarations mirroring `GET /api/v1/analytics`. The runtime schema
+// for the request lives in `apps/api/src/modules/analytics/analytics.schemas.ts`
+// so API tests never depend on this package's build output.
+
+export type AnalyticsRangeKind =
+  | '7d'
+  | '30d'
+  | '90d'
+  | 'current-year'
+  | 'previous-year'
+  | 'custom'
+
+export type AnalyticsTrendGranularity = 'day' | 'week' | 'month'
+
+export interface AnalyticsTrendPoint {
+  /** Day key for `day`, Monday day key for `week`, `YYYY-MM` for `month`. */
+  bucket: string
+  minutes: number
+  sessions: number
+}
+
+export interface AnalyticsMetricDelta {
+  current: number
+  previous: number
+  absolute: number
+  /** `null` when a percentage would mislead (previous period was zero). */
+  changePercent: number | null
+  zeroBaseline: boolean
+  direction: 'up' | 'down' | 'flat'
+}
+
+export interface AnalyticsSkillTrend extends AnalyticsMetricDelta {
+  currentMinutes: number
+  previousMinutes: number
+}
+
+export interface AnalyticsSkill {
+  skillId: string
+  name: string
+  totalMinutes: number
+  percentage: number
+  sessions: number
+  averageSessionMinutes: number
+  trend: AnalyticsSkillTrend
+}
+
+export interface AnalyticsSummary {
+  totalMinutes: number
+  totalMinutesFormatted: string
+  totalSessions: number
+  activeDays: number
+  inactiveDays: number
+  daysInRange: number
+  averageDailyMinutes: number
+  averageSessionMinutes: number
+  longestSession: {
+    id: string
+    minutes: number
+    minutesFormatted: string
+    date: string
+    skillId: string
+  } | null
+  currentStreak: number
+  longestStreak: number
+  qualifyingMinutes: number
+  dailyTargetMinutes: number
+  daysMeetingTarget: number
+  percentageOfDaysMeetingTarget: number
+}
+
+export interface AnalyticsComparisonSide {
+  from: string
+  to: string
+  totalMinutes: number
+  totalSessions: number
+  activeDays: number
+  averageDailyMinutes: number
+}
+
+export interface AnalyticsPlanMilestone {
+  milestoneId: string
+  title: string
+  status: string
+  startDate: string
+  endDate: string
+  targetMinutes: number
+  actualMinutes: number
+  progressPercent: number
+  remainingDays: number
+  isCurrent: boolean
+  isNext: boolean
+}
+
+export interface AnalyticsPlan {
+  planId: string
+  title: string
+  objectiveTitle: string | null
+  startDate: string
+  endDate: string
+  targetMinutes: number
+  actualMinutes: number
+  remainingMinutes: number
+  unassignedMinutes: number
+  studyProgressPercent: number
+  timeProgressPercent: number
+  elapsedDays: number
+  totalDays: number
+  remainingDays: number
+  paceStatus: 'ahead' | 'on-track' | 'behind' | 'not-started' | 'completed'
+  requiredDailyMinutes: number
+  milestones: AnalyticsPlanMilestone[]
+  monthly: Array<{ month: string; totalMinutes: number }>
+  weekly: Array<{ weekStart: string; totalMinutes: number }>
+}
+
+export interface AnalyticsGoalProgress {
+  id: string
+  period: GoalPeriod
+  targetMinutes: number
+  actualMinutes: number
+  remainingMinutes: number
+  percentage: number
+  status: string
+}
+
+export interface AnalyticsPayload {
+  range: {
+    kind: AnalyticsRangeKind
+    from: string
+    to: string
+    days: number
+    comparisonBasis: 'preceding-window' | 'same-period-last-year'
+  }
+  previousRange: { from: string; to: string }
+  timezone: string
+  summary: AnalyticsSummary
+  skills: AnalyticsSkill[]
+  trends: { granularity: AnalyticsTrendGranularity; points: AnalyticsTrendPoint[] }
+  comparison: {
+    current: AnalyticsComparisonSide
+    previous: AnalyticsComparisonSide
+    deltas: {
+      totalMinutes: AnalyticsMetricDelta
+      totalSessions: AnalyticsMetricDelta
+      activeDays: AnalyticsMetricDelta
+      averageDailyMinutes: AnalyticsMetricDelta
+    }
+  }
+  plans: AnalyticsPlan[]
+  goals: AnalyticsGoalProgress[]
+}
+
 // ─── Health Response ─────────────────────────────────────────────────────────
 
 export interface HealthResponse {

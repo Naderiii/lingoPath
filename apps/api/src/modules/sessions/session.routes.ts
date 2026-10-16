@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { createSessionRepository } from './session.repository.js'
 import { createSessionService } from './session.service.js'
 import { createPrismaStreakReader } from '../calendar/calendar.service.js'
-import { DEFAULT_TIMEZONE, resolveUserId } from '../../shared/current-user.js'
+import { resolveUserTimeZone, resolveUserId } from '../../shared/current-user.js'
 import {
   CreateStudySessionSchema,
   UpdateStudySessionSchema,
@@ -15,18 +15,12 @@ export default async function sessionRoutes(app: FastifyInstance) {
   })
 
   // The user's configured timezone drives every day boundary on this route.
-  const resolveUserTimeZone = async (userId: string): Promise<string> => {
-    const user = await app.prisma.user.findUnique({
-      where: { id: userId },
-      select: { timezone: true },
-    })
-    return user?.timezone ?? DEFAULT_TIMEZONE
-  }
+  const resolveTimeZone = (userId: string) => resolveUserTimeZone(app.prisma, userId)
 
   // GET /api/v1/sessions/today-stats
   app.get('/sessions/today-stats', async (request, _reply) => {
     const userId = resolveUserId(request)
-    return sessionService.getTodayStats(userId, await resolveUserTimeZone(userId))
+    return sessionService.getTodayStats(userId, await resolveTimeZone(userId))
   })
 
   // GET /api/v1/sessions

@@ -4,6 +4,7 @@ import type {
   CreateStudySession,
   UpdateStudySession,
 } from '@lingopath/types'
+import { keysetOrderBy, keysetWhere } from '../../shared/keyset-pagination.js'
 import { dayBoundsUtc, getDayKey } from '../../shared/timezone.js'
 
 export function createSessionRepository(prisma: PrismaClient) {
@@ -11,6 +12,9 @@ export function createSessionRepository(prisma: PrismaClient) {
     async findMany(userId: string, query: ListStudySessionsQuery) {
       const { cursor, limit, skillId, categoryId, planId, from, to, search, sortBy, sortOrder } =
         query
+
+      const direction = sortOrder ?? 'desc'
+      const sortField = sortBy ?? 'startedAt'
 
       const searchFilter = search
         ? {
@@ -21,6 +25,23 @@ export function createSessionRepository(prisma: PrismaClient) {
             ],
           }
         : {}
+
+      // Keyset pagination on the *sort* field, not on the id: the cursor row
+      // provides its own timestamp so the next page continues where the previous
+      // one stopped (see shared/keyset-pagination.ts).
+      const cursorWhere = await keysetWhere({
+        cursor,
+        field: sortField,
+        direction,
+        loadCursorValue: async () => {
+          if (!cursor) return null
+          const row = await prisma.studySession.findFirst({
+            where: { id: cursor, userId },
+            select: { startedAt: true, durationMinutes: true, createdAt: true },
+          })
+          return row ? row[sortField] : null
+        },
+      })
 
       const sessions = await prisma.studySession.findMany({
         where: {
@@ -36,11 +57,11 @@ export function createSessionRepository(prisma: PrismaClient) {
                 },
               }
             : {}),
-          ...(cursor ? { id: { lt: cursor } } : {}),
+          ...(cursorWhere ?? {}),
           ...searchFilter,
         },
         include: { skill: true, category: true, plan: true, milestone: true },
-        orderBy: { [sortBy ?? 'startedAt']: sortOrder ?? 'desc' },
+        orderBy: keysetOrderBy(sortField, direction),
         take: limit + 1,
       })
 
@@ -69,6 +90,22 @@ export function createSessionRepository(prisma: PrismaClient) {
       const totalMinutes = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0)
 
       return { todaySessions, totalMinutes }
+    },
+
+    /** Ownership-scoped plan lookup used to validate session attribution. */
+    findPlanById(id: string, userId: string) {
+      return prisma.longTermPlan.findFirst({
+        where: { id, userId },
+        select: { id: true },
+      })
+    },
+
+    /** Milestone lookup with its owning plan, used to validate attribution. */
+    findMilestoneById(id: string) {
+      return prisma.planMilestone.findUnique({
+        where: { id },
+        select: { id: true, planId: true, plan: { select: { userId: true } } },
+      })
     },
 
     findById(id: string, userId: string) {

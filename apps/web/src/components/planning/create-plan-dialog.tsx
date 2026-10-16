@@ -26,6 +26,13 @@ interface FormValues {
   targetHours: number
 }
 
+/** Local calendar day of a Date (never the UTC day). */
+function localDayKey(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
+    value.getDate(),
+  ).padStart(2, '0')}`
+}
+
 export function CreatePlanDialog({ open, onOpenChange }: CreatePlanDialogProps) {
   const createPlan = useCreatePlan()
   const [serverError, setServerError] = useState<string | null>(null)
@@ -39,7 +46,7 @@ export function CreatePlanDialog({ open, onOpenChange }: CreatePlanDialogProps) 
     defaultValues: {
       title: '',
       description: '',
-      startDate: new Date().toISOString().slice(0, 10),
+      startDate: localDayKey(new Date()),
       endDate: '',
       targetHours: 100,
     },

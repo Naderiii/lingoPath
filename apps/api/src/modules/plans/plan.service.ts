@@ -78,6 +78,17 @@ export function validateMilestoneDates(
 }
 
 /**
+ * Study progress towards a plan or milestone target, as a capped percentage with
+ * two decimals. Single definition: the plan endpoints, the dashboard and the
+ * analytics module all call this instead of repeating the expression.
+ */
+export function computeStudyProgressPercent(actualMinutes: number, targetMinutes: number): number {
+  return targetMinutes > 0
+    ? Math.min(100, Math.round((actualMinutes / targetMinutes) * 10000) / 100)
+    : 0
+}
+
+/**
  * Compute remaining days dynamically from an end date using the user's timezone.
  * Handles month boundaries, year boundaries, leap years, midnight, and DST.
  * Never stores remainingDays as source of truth.
@@ -202,6 +213,13 @@ export interface PlanProgress {
   timeProgressPercent: number
   targetMinutes: number
   actualMinutes: number
+  /**
+   * Plan-linked minutes that could not be attributed to a milestone in this plan
+   * (no milestone tag and no matching milestone date range). Keeps the payload
+   * self-consistent: sum(milestones[].actualMinutes) + unassignedMinutes equals
+   * actualMinutes.
+   */
+  unassignedMinutes: number
   remainingMinutes: number
   studyProgressPercent: number
   targetFormatted: string
@@ -251,7 +269,7 @@ export function createPlanService(repository: PlanRepository) {
         const actualMinutes = actualMinutesMap.get(plan.id) ?? 0
         const studyProgressPercent =
           plan.targetMinutes > 0
-            ? Math.min(100, Math.round((actualMinutes / plan.targetMinutes) * 10000) / 100)
+            ? computeStudyProgressPercent(actualMinutes, plan.targetMinutes)
             : 0
 
         return {
@@ -300,17 +318,18 @@ export function createPlanService(repository: PlanRepository) {
       if (!plan) throw new NotFoundError('LongTermPlan', id)
 
       const now = new Date()
-      const [timezone, actualMinutes, milestoneMinutes, weeklyProgress, monthlyProgress] =
-        await Promise.all([
-          repository.getUserTimezone ? repository.getUserTimezone(userId) : Promise.resolve('UTC'),
-          repository.getActualMinutesForPlan(id),
-          repository.getActualMinutesByMilestone(id),
-          repository.getWeeklyActualMinutes(id, plan.startDate, plan.endDate),
-          repository.getMonthlyActualMinutes(id, plan.startDate, plan.endDate),
-        ])
+      // Timezone first: the weekly/monthly buckets below must use the user's
+      // calendar, not UTC.
+      const timezone = repository.getUserTimezone ? await repository.getUserTimezone(userId) : 'UTC'
+      const [actualMinutes, milestoneMinutes, weeklyProgress, monthlyProgress] = await Promise.all([
+        repository.getActualMinutesForPlan(id),
+        repository.getActualMinutesByMilestone(id),
+        repository.getWeeklyActualMinutes(id, plan.startDate, plan.endDate, timezone),
+        repository.getMonthlyActualMinutes(id, plan.startDate, plan.endDate, timezone),
+      ])
 
       const milestoneActualMap = new Map<string, number>()
-      for (const m of milestoneMinutes) {
+      for (const m of milestoneMinutes.milestones) {
         milestoneActualMap.set(m.milestoneId, m.totalMinutes)
       }
 
@@ -324,10 +343,7 @@ export function createPlanService(repository: PlanRepository) {
         timezone,
       )
       const remainingMinutes = Math.max(0, plan.targetMinutes - actualMinutes)
-      const studyProgressPercent =
-        plan.targetMinutes > 0
-          ? Math.min(100, Math.round((actualMinutes / plan.targetMinutes) * 10000) / 100)
-          : 0
+      const studyProgressPercent = computeStudyProgressPercent(actualMinutes, plan.targetMinutes)
 
       const progress: PlanProgress = {
         totalDays,
@@ -336,6 +352,7 @@ export function createPlanService(repository: PlanRepository) {
         timeProgressPercent,
         targetMinutes: plan.targetMinutes,
         actualMinutes,
+        unassignedMinutes: milestoneMinutes.unassignedMinutes,
         remainingMinutes,
         studyProgressPercent,
         targetFormatted: formatMinutes(plan.targetMinutes),
@@ -349,10 +366,7 @@ export function createPlanService(repository: PlanRepository) {
       const milestoneProgresses: MilestoneProgress[] = (plan.milestones ?? []).map((m) => {
         const mActual = milestoneActualMap.get(m.id) ?? 0
         const mRemaining = Math.max(0, m.targetMinutes - mActual)
-        const mProgressPercent =
-          m.targetMinutes > 0
-            ? Math.min(100, Math.round((mActual / m.targetMinutes) * 10000) / 100)
-            : 0
+        const mProgressPercent = computeStudyProgressPercent(mActual, m.targetMinutes)
         const mRemainingDays = computeRemainingDays(m.endDate, now, timezone)
 
         const isCurrent =
@@ -470,7 +484,7 @@ export function createPlanService(repository: PlanRepository) {
       ])
 
       const actualMap = new Map<string, number>()
-      for (const m of milestoneMinutes) {
+      for (const m of milestoneMinutes.milestones) {
         actualMap.set(m.milestoneId, m.totalMinutes)
       }
 
@@ -481,9 +495,7 @@ export function createPlanService(repository: PlanRepository) {
           actualMinutes,
           remainingDays: computeRemainingDays(m.endDate, undefined, timezone),
           progressPercent:
-            m.targetMinutes > 0
-              ? Math.min(100, Math.round((actualMinutes / m.targetMinutes) * 10000) / 100)
-              : 0,
+            m.targetMinutes > 0 ? computeStudyProgressPercent(actualMinutes, m.targetMinutes) : 0,
         }
       })
     },

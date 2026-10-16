@@ -20,6 +20,13 @@ interface CreateGoalDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+/** Local calendar day of a Date (never the UTC day). */
+function localDayKey(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(
+    value.getDate(),
+  ).padStart(2, '0')}`
+}
+
 export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) {
   const createGoal = useCreateGoal()
   const { data: plansData } = usePlans('ACTIVE')
@@ -30,9 +37,7 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
   const [endDate, setEndDate] = useState('')
   const [planId, setPlanId] = useState('')
   const [skills, setSkills] = useState<Skill[]>([])
-  const [skillTargets, setSkillTargets] = useState<{ skillId: string; targetMinutes: number }[]>(
-    [],
-  )
+  const [skillTargets, setSkillTargets] = useState<{ skillId: string; targetMinutes: number }[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Fetch skills
@@ -78,14 +83,12 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
         break
     }
 
-    setStartDate(start.toISOString().split('T')[0] ?? '')
-    setEndDate(end.toISOString().split('T')[0] ?? '')
+    setStartDate(localDayKey(start))
+    setEndDate(localDayKey(end))
   }, [period, open])
 
   const handleAddSkillTarget = () => {
-    const availableSkills = skills.filter(
-      (s) => !skillTargets.some((st) => st.skillId === s.id),
-    )
+    const availableSkills = skills.filter((s) => !skillTargets.some((st) => st.skillId === s.id))
     if (availableSkills.length > 0) {
       setSkillTargets([...skillTargets, { skillId: availableSkills[0]!.id, targetMinutes: 0 }])
     }
@@ -199,9 +202,7 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
                       min="0"
                       max="999"
                       value={targetHours}
-                      onChange={(e) =>
-                        setTargetMinutes(Number(e.target.value) * 60 + targetMins)
-                      }
+                      onChange={(e) => setTargetMinutes(Number(e.target.value) * 60 + targetMins)}
                       className="border-input bg-background text-foreground w-full rounded-md border px-3 py-2 text-sm"
                       placeholder="Hours"
                     />
@@ -213,9 +214,7 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
                       min="0"
                       max="59"
                       value={targetMins}
-                      onChange={(e) =>
-                        setTargetMinutes(targetHours * 60 + Number(e.target.value))
-                      }
+                      onChange={(e) => setTargetMinutes(targetHours * 60 + Number(e.target.value))}
                       className="border-input bg-background text-foreground w-full rounded-md border px-3 py-2 text-sm"
                       placeholder="Minutes"
                     />

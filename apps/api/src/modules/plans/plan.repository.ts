@@ -6,6 +6,13 @@ import type {
   CreatePlanMilestone,
   UpdatePlanMilestone,
 } from '@lingopath/types'
+import { keysetOrderBy, keysetWhere } from '../../shared/keyset-pagination.js'
+import {
+  addDaysToDayKey,
+  getDayKey,
+  getWeekdayIndex,
+  isValidTimeZone,
+} from '../../shared/timezone.js'
 
 export function createPlanRepository(prisma: PrismaClient) {
   return {
@@ -14,17 +21,33 @@ export function createPlanRepository(prisma: PrismaClient) {
         where: { id: userId },
         select: { timezone: true },
       })
-      return user?.timezone ?? 'UTC'
+      const stored = user?.timezone
+      // An unusable stored zone must not reach `Intl` (it throws): fall back to UTC.
+      return stored && isValidTimeZone(stored) ? stored : 'UTC'
     },
 
     async findMany(userId: string, query: ListPlansQuery) {
       const { cursor, limit, status } = query
 
+      const cursorWhere = await keysetWhere({
+        cursor,
+        field: 'startDate',
+        direction: 'desc',
+        loadCursorValue: async () => {
+          if (!cursor) return null
+          const row = await prisma.longTermPlan.findFirst({
+            where: { id: cursor, userId },
+            select: { startDate: true },
+          })
+          return row?.startDate ?? null
+        },
+      })
+
       const plans = await prisma.longTermPlan.findMany({
         where: {
           userId,
           ...(status ? { status } : {}),
-          ...(cursor ? { id: { lt: cursor } } : {}),
+          ...(cursorWhere ?? {}),
         },
         include: {
           objective: true,
@@ -34,7 +57,7 @@ export function createPlanRepository(prisma: PrismaClient) {
             include: { skill: true },
           },
         },
-        orderBy: { startDate: 'desc' },
+        orderBy: keysetOrderBy('startDate', 'desc'),
         take: limit + 1,
       })
 
@@ -121,16 +144,23 @@ export function createPlanRepository(prisma: PrismaClient) {
     },
 
     /**
-     * Actual study minutes grouped by milestone.
-     * Prevents double-counting by prioritizing direct milestoneId links,
-     * then assigning plan sessions without a milestone tag by date range.
+     * Actual study minutes grouped by milestone, plus the plan-linked minutes
+     * that belong to no milestone of this plan.
+     *
+     * Prevents double-counting by prioritising direct `milestoneId` links, then
+     * assigning plan sessions without a milestone tag by date range. Minutes that
+     * match neither (legacy rows whose milestone was deleted or points at another
+     * plan) are reported as unassigned instead of being silently dropped, so the
+     * breakdown always adds up to the plan total.
      */
-    async getActualMinutesByMilestone(
-      planId: string,
-    ): Promise<Array<{ milestoneId: string; totalMinutes: number }>> {
+    async getActualMinutesByMilestone(planId: string): Promise<{
+      milestones: Array<{ milestoneId: string; totalMinutes: number }>
+      unassignedMinutes: number
+    }> {
       const milestones = await prisma.planMilestone.findMany({
         where: { planId },
         select: { id: true, startDate: true, endDate: true },
+        orderBy: { ordering: 'asc' },
       })
 
       const sessions = await prisma.studySession.findMany({
@@ -145,30 +175,44 @@ export function createPlanRepository(prisma: PrismaClient) {
         map.set(m.id, 0)
       }
 
+      let unassignedMinutes = 0
+
       for (const s of sessions) {
         if (s.milestoneId && map.has(s.milestoneId)) {
           map.set(s.milestoneId, (map.get(s.milestoneId) ?? 0) + s.durationMinutes)
-        } else if (!s.milestoneId) {
-          for (const m of milestones) {
-            if (s.startedAt >= m.startDate && s.startedAt <= m.endDate) {
-              map.set(m.id, (map.get(m.id) ?? 0) + s.durationMinutes)
-              break // Milestone ranges do not overlap; attribute at most once
-            }
-          }
+          continue
+        }
+
+        // Explicitly tagged to a milestone that is not part of this plan: never
+        // re-attribute it by date (that would move history between milestones).
+        if (s.milestoneId) {
+          unassignedMinutes += s.durationMinutes
+          continue
+        }
+
+        const match = milestones.find((m) => s.startedAt >= m.startDate && s.startedAt <= m.endDate)
+        if (match) {
+          map.set(match.id, (map.get(match.id) ?? 0) + s.durationMinutes)
+        } else {
+          unassignedMinutes += s.durationMinutes
         }
       }
 
-      return Array.from(map.entries()).map(([milestoneId, totalMinutes]) => ({
-        milestoneId,
-        totalMinutes,
-      }))
+      return {
+        milestones: Array.from(map.entries()).map(([milestoneId, totalMinutes]) => ({
+          milestoneId,
+          totalMinutes,
+        })),
+        unassignedMinutes,
+      }
     },
 
-    /** Actual study minutes aggregated by week for a plan */
+    /** Actual study minutes aggregated by week for a plan (user's local weeks) */
     async getWeeklyActualMinutes(
       planId: string,
       startDate: Date,
       endDate: Date,
+      timeZone: string = 'UTC',
     ): Promise<Array<{ weekStart: string; totalMinutes: number }>> {
       const sessions = await prisma.studySession.findMany({
         where: {
@@ -181,13 +225,10 @@ export function createPlanRepository(prisma: PrismaClient) {
 
       const weekMap = new Map<string, number>()
       for (const s of sessions) {
-        const d = new Date(s.startedAt)
-        // Get Monday of that week in UTC
-        const day = d.getUTCDay()
-        const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1)
-        const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff))
-        const key = monday.toISOString().slice(0, 10)
-        weekMap.set(key, (weekMap.get(key) ?? 0) + s.durationMinutes)
+        const dayKey = getDayKey(s.startedAt, timeZone)
+        // Monday of that local week.
+        const mondayKey = addDaysToDayKey(dayKey, -((getWeekdayIndex(dayKey) + 6) % 7))
+        weekMap.set(mondayKey, (weekMap.get(mondayKey) ?? 0) + s.durationMinutes)
       }
 
       return Array.from(weekMap.entries())
@@ -195,11 +236,12 @@ export function createPlanRepository(prisma: PrismaClient) {
         .map(([weekStart, totalMinutes]) => ({ weekStart, totalMinutes }))
     },
 
-    /** Actual study minutes aggregated by month for a plan */
+    /** Actual study minutes aggregated by month for a plan (user's local months) */
     async getMonthlyActualMinutes(
       planId: string,
       startDate: Date,
       endDate: Date,
+      timeZone: string = 'UTC',
     ): Promise<Array<{ month: string; totalMinutes: number }>> {
       const sessions = await prisma.studySession.findMany({
         where: {
@@ -212,8 +254,7 @@ export function createPlanRepository(prisma: PrismaClient) {
 
       const monthMap = new Map<string, number>()
       for (const s of sessions) {
-        const d = new Date(s.startedAt)
-        const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+        const key = getDayKey(s.startedAt, timeZone).slice(0, 7)
         monthMap.set(key, (monthMap.get(key) ?? 0) + s.durationMinutes)
       }
 

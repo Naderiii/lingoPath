@@ -1,24 +1,40 @@
 import type { PrismaClient, Prisma } from '@prisma/client'
 import type { ListGoalsQuery, CreateGoal, UpdateGoal } from '@lingopath/types'
+import { keysetOrderBy, keysetWhere } from '../../shared/keyset-pagination.js'
+import { resolveGoalProgressWindow } from './goal-periods.js'
 
 export function createGoalRepository(prisma: PrismaClient) {
   return {
     async findMany(userId: string, query: ListGoalsQuery) {
       const { cursor, limit, period, isActive } = query
 
+      const cursorWhere = await keysetWhere({
+        cursor,
+        field: 'startDate',
+        direction: 'desc',
+        loadCursorValue: async () => {
+          if (!cursor) return null
+          const row = await prisma.goal.findFirst({
+            where: { id: cursor, userId },
+            select: { startDate: true },
+          })
+          return row?.startDate ?? null
+        },
+      })
+
       const goals = await prisma.goal.findMany({
         where: {
           userId,
           ...(period ? { period } : {}),
           ...(isActive !== undefined ? { isActive } : {}),
-          ...(cursor ? { id: { lt: cursor } } : {}),
+          ...(cursorWhere ?? {}),
         },
         include: {
           plan: true,
           objective: true,
           skillTargets: { include: { skill: true } },
         },
-        orderBy: { startDate: 'desc' },
+        orderBy: keysetOrderBy('startDate', 'desc'),
         take: limit + 1,
       })
 
@@ -114,7 +130,7 @@ export function createGoalRepository(prisma: PrismaClient) {
       return prisma.goal.delete({ where: { id } })
     },
 
-    async calculateProgress(goalId: string, userId: string) {
+    async calculateProgress(goalId: string, userId: string, timeZone: string = 'UTC') {
       const goal = await prisma.goal.findFirst({
         where: { id: goalId, userId },
         include: { skillTargets: { include: { skill: true } } },
@@ -124,24 +140,39 @@ export function createGoalRepository(prisma: PrismaClient) {
         return null
       }
 
-      // Query study sessions within goal date range
-      const sessions = await prisma.studySession.findMany({
-        where: {
-          userId,
-          startedAt: {
-            gte: goal.startDate,
-            ...(goal.endDate ? { lte: goal.endDate } : {}),
-          },
-          ...(goal.planId ? { planId: goal.planId } : {}),
-        },
-        include: { skill: true },
+      // Progress measures the goal's current period (its final period once the
+      // goal has ended), clipped to the goal's validity range — see goal-periods.ts.
+      const window = resolveGoalProgressWindow({
+        period: goal.period,
+        startDate: goal.startDate,
+        endDate: goal.endDate,
+        timeZone,
+        now: new Date(),
       })
+
+      const sessions = window
+        ? await prisma.studySession.findMany({
+            where: {
+              userId,
+              startedAt: { gte: window.start, lt: window.end },
+              // Same definition of "belongs to plan P" as plan progress: an
+              // explicit link or a milestone of that plan.
+              ...(goal.planId
+                ? { OR: [{ planId: goal.planId }, { milestone: { planId: goal.planId } }] }
+                : {}),
+            },
+            include: { skill: true },
+          })
+        : []
 
       // Calculate total actual minutes
       const actualMinutes = sessions.reduce((sum, session) => sum + session.durationMinutes, 0)
 
       // Calculate per-skill actual minutes
-      const skillProgress: Record<string, { targetMinutes: number; actualMinutes: number; skill: { id: string; name: string } }> = {}
+      const skillProgress: Record<
+        string,
+        { targetMinutes: number; actualMinutes: number; skill: { id: string; name: string } }
+      > = {}
 
       if (goal.skillTargets.length > 0) {
         goal.skillTargets.forEach((target) => {
@@ -161,14 +192,24 @@ export function createGoalRepository(prisma: PrismaClient) {
 
       const targetMinutes = goal.targetMinutes
       const remainingMinutes = Math.max(0, targetMinutes - actualMinutes)
-      const percentage = targetMinutes > 0 ? Math.round((actualMinutes / targetMinutes) * 100) : 0
+      // Capped like every other module; over-target values stay visible through
+      // actualMinutes itself.
+      const percentage =
+        targetMinutes > 0 ? Math.min(100, Math.round((actualMinutes / targetMinutes) * 100)) : 0
+      // A zero-target goal is degenerate: never "completed" at 0%.
+      const status =
+        targetMinutes > 0 && actualMinutes >= targetMinutes
+          ? 'completed'
+          : actualMinutes > 0
+            ? 'in_progress'
+            : 'not_started'
 
       return {
         targetMinutes,
         actualMinutes,
         remainingMinutes,
         percentage,
-        status: actualMinutes >= targetMinutes ? 'completed' : actualMinutes > 0 ? 'in_progress' : 'not_started',
+        status,
         skillProgress: Object.values(skillProgress),
       }
     },

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { createPlanRepository } from './plan.repository.js'
 import { createPlanService } from './plan.service.js'
+import { resolveUserId } from '../../shared/current-user.js'
 import {
   ListPlansQuerySchema,
   CreateLongTermPlanSchema,
@@ -9,49 +10,47 @@ import {
   UpdatePlanMilestoneSchema,
 } from '@lingopath/types'
 
-const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001'
-
 export default async function planRoutes(app: FastifyInstance) {
   const planService = createPlanService(createPlanRepository(app.prisma))
 
   // GET /api/v1/plans
   app.get('/plans', async (request, _reply) => {
     const query = ListPlansQuerySchema.parse(request.query)
-    return planService.listPlans(DEFAULT_USER_ID, query)
+    return planService.listPlans(resolveUserId(request), query)
   })
 
   // GET /api/v1/plans/:id
   app.get<{ Params: { id: string } }>('/plans/:id', async (request, _reply) => {
-    return planService.getPlanById(request.params.id, DEFAULT_USER_ID)
+    return planService.getPlanById(request.params.id, resolveUserId(request))
   })
 
   // GET /api/v1/plans/:id/progress — consolidated detail with progress from StudySession data
   app.get<{ Params: { id: string } }>('/plans/:id/progress', async (request, _reply) => {
-    return planService.getPlanProgress(request.params.id, DEFAULT_USER_ID)
+    return planService.getPlanProgress(request.params.id, resolveUserId(request))
   })
 
   // POST /api/v1/plans
   app.post('/plans', async (request, reply) => {
     const body = CreateLongTermPlanSchema.parse(request.body)
-    const plan = await planService.createPlan(DEFAULT_USER_ID, body)
+    const plan = await planService.createPlan(resolveUserId(request), body)
     return reply.status(201).send(plan)
   })
 
   // PUT /api/v1/plans/:id
   app.put<{ Params: { id: string } }>('/plans/:id', async (request, _reply) => {
     const body = UpdateLongTermPlanSchema.parse(request.body)
-    return planService.updatePlan(request.params.id, DEFAULT_USER_ID, body)
+    return planService.updatePlan(request.params.id, resolveUserId(request), body)
   })
 
   // PATCH /api/v1/plans/:id
   app.patch<{ Params: { id: string } }>('/plans/:id', async (request, _reply) => {
     const body = UpdateLongTermPlanSchema.parse(request.body)
-    return planService.updatePlan(request.params.id, DEFAULT_USER_ID, body)
+    return planService.updatePlan(request.params.id, resolveUserId(request), body)
   })
 
   // DELETE /api/v1/plans/:id
   app.delete<{ Params: { id: string } }>('/plans/:id', async (request, reply) => {
-    await planService.deletePlan(request.params.id, DEFAULT_USER_ID)
+    await planService.deletePlan(request.params.id, resolveUserId(request))
     return reply.status(204).send()
   })
 
@@ -59,7 +58,7 @@ export default async function planRoutes(app: FastifyInstance) {
 
   // GET /api/v1/plans/:planId/milestones
   app.get<{ Params: { planId: string } }>('/plans/:planId/milestones', async (request, _reply) => {
-    return planService.listMilestones(request.params.planId, DEFAULT_USER_ID)
+    return planService.listMilestones(request.params.planId, resolveUserId(request))
   })
 
   // POST /api/v1/plans/:planId/milestones
@@ -67,7 +66,7 @@ export default async function planRoutes(app: FastifyInstance) {
     const body = CreatePlanMilestoneSchema.parse(request.body)
     const milestone = await planService.createMilestone(
       request.params.planId,
-      DEFAULT_USER_ID,
+      resolveUserId(request),
       body,
     )
     return reply.status(201).send(milestone)
@@ -76,18 +75,18 @@ export default async function planRoutes(app: FastifyInstance) {
   // PUT /api/v1/milestones/:id
   app.put<{ Params: { id: string } }>('/milestones/:id', async (request, _reply) => {
     const body = UpdatePlanMilestoneSchema.parse(request.body)
-    return planService.updateMilestone(request.params.id, DEFAULT_USER_ID, body)
+    return planService.updateMilestone(request.params.id, resolveUserId(request), body)
   })
 
   // PATCH /api/v1/milestones/:id
   app.patch<{ Params: { id: string } }>('/milestones/:id', async (request, _reply) => {
     const body = UpdatePlanMilestoneSchema.parse(request.body)
-    return planService.updateMilestone(request.params.id, DEFAULT_USER_ID, body)
+    return planService.updateMilestone(request.params.id, resolveUserId(request), body)
   })
 
   // DELETE /api/v1/milestones/:id
   app.delete<{ Params: { id: string } }>('/milestones/:id', async (request, reply) => {
-    await planService.deleteMilestone(request.params.id, DEFAULT_USER_ID)
+    await planService.deleteMilestone(request.params.id, resolveUserId(request))
     return reply.status(204).send()
   })
 }

@@ -147,6 +147,8 @@ model StudySession {
   @@index([userId, skillId])
   @@index([userId, categoryId])
   @@index([startedAt, endedAt])
+  // Phase 8 analytics: longest-session lookup per user (ORDER BY duration DESC LIMIT 1).
+  @@index([userId, durationMinutes])
   @@map("study_sessions")
 }
 
