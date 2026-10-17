@@ -42,13 +42,37 @@ interface StoredRecommendation {
 
 function createFakePrisma() {
   const rows: StoredRecommendation[] = []
+  const feedback: Array<{
+    id: string
+    userId: string
+    recommendationId: string
+    action: string
+    reason: string | null
+    createdAt: Date
+  }> = []
   let sequence = 0
+  let feedbackSequence = 0
+  const createdGoals: Array<Record<string, unknown>> = []
 
   const matches = (row: StoredRecommendation, where: Record<string, unknown> | undefined) => {
     if (!where) return true
     if (where['id'] !== undefined && row.id !== where['id']) return false
     if (where['userId'] !== undefined && row.userId !== where['userId']) return false
-    if (where['status'] !== undefined && row.status !== where['status']) return false
+    const status = where['status']
+    if (typeof status === 'string' && row.status !== status) return false
+    if (
+      status !== null &&
+      typeof status === 'object' &&
+      'in' in (status as Record<string, unknown>) &&
+      !(status as { in: string[] }).in.includes(row.status)
+    ) {
+      return false
+    }
+    if (where['appliedAt'] === null && row.appliedAt !== null) return false
+    const expiresAt = where['expiresAt'] as { lt?: Date } | undefined
+    if (expiresAt && expiresAt.lt instanceof Date) {
+      if (row.expiresAt === null || row.expiresAt.getTime() >= expiresAt.lt.getTime()) return false
+    }
     return true
   }
 
@@ -82,13 +106,58 @@ function createFakePrisma() {
     goal: {
       findMany: async () => [],
       findFirst: async () => null,
-      create: async (args: { data: Record<string, unknown> }) => ({ id: 'goal-1', ...args.data }),
+      create: async (args: { data: Record<string, unknown> }) => {
+        createdGoals.push(args.data)
+        return { id: 'goal-1', ...args.data }
+      },
     },
     longTermPlan: { findMany: async () => [], findFirst: async () => null },
     planMilestone: { findMany: async () => [] },
     levelAssessment: { findMany: async () => [] },
     exam: { findMany: async () => [], findFirst: async () => null },
-    recommendationFeedback: { findMany: async () => [], create: async () => ({ id: 'fb-1' }) },
+    recommendationFeedback: {
+      findMany: async (args: { where?: { userId?: string; action?: string }; take?: number }) => {
+        const where = args.where ?? {}
+        return feedback
+          .filter((entry) => (where.userId ? entry.userId === where.userId : true))
+          .filter((entry) => (where.action ? entry.action === where.action : true))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .slice(0, args.take ?? 20)
+          .map((entry) => {
+            const recommendation = rows.find((row) => row.id === entry.recommendationId)
+            return {
+              id: entry.id,
+              action: entry.action,
+              reason: entry.reason,
+              createdAt: entry.createdAt,
+              recommendation: {
+                id: recommendation?.id,
+                type: recommendation?.type,
+                title: recommendation?.title,
+                recommendation: recommendation?.recommendation,
+                rationale: recommendation?.rationale,
+                confidence: recommendation?.confidence,
+                relatedSkillId: recommendation?.relatedSkillId ?? null,
+                status: recommendation?.status,
+                appliedAt: recommendation?.appliedAt ?? null,
+                appliedGoalId: recommendation?.appliedGoalId ?? null,
+              },
+            }
+          })
+      },
+      create: async (args: { data: Record<string, unknown> }) => {
+        feedbackSequence += 1
+        feedback.push({
+          id: `fb-${feedbackSequence}`,
+          userId: String(args.data['userId']),
+          recommendationId: String(args.data['recommendationId']),
+          action: String(args.data['action']),
+          reason: (args.data['reason'] as string | null) ?? null,
+          createdAt: (args.data['createdAt'] as Date) ?? new Date(),
+        })
+        return { id: `fb-${feedbackSequence}` }
+      },
+    },
     recommendation: {
       create: async (args: { data: Record<string, unknown> }) => {
         sequence += 1
@@ -127,11 +196,11 @@ function createFakePrisma() {
     },
   }
 
-  return { prisma: prisma as unknown as PrismaClient, rows }
+  return { prisma: prisma as unknown as PrismaClient, rows, feedback, createdGoals }
 }
 
 async function buildTestApp() {
-  const { prisma, rows } = createFakePrisma()
+  const { prisma, rows, feedback, createdGoals } = createFakePrisma()
   const app = Fastify({ logger: false })
   await app.register(errorHandlerPlugin)
   app.decorate('prisma', prisma)
@@ -140,7 +209,7 @@ async function buildTestApp() {
     llmAdapter: createUnavailableLlmAdapter(),
   })
   await app.ready()
-  return { app, rows }
+  return { app, rows, feedback, createdGoals }
 }
 
 describe('POST /api/v1/recommendations/generate', () => {
@@ -210,6 +279,139 @@ describe('GET /api/v1/recommendations', () => {
     })
 
     expect(response.statusCode).toBe(422)
+    await app.close()
+  })
+
+  it('keeps an accepted but unapplied row in the actionable view', async () => {
+    const { app } = await buildTestApp()
+    const generated = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+    const id = generated.json().data[0].id
+
+    const fresh = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations?actionable=true',
+    })
+    expect(fresh.json().data).toHaveLength(1)
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/recommendations/${id}/feedback`,
+      payload: { action: 'ACCEPTED' },
+    })
+
+    const accepted = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations?actionable=true',
+    })
+    expect(accepted.json().data).toHaveLength(1)
+    expect(accepted.json().data[0].status).toBe('ACCEPTED')
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/recommendations/${id}/apply`,
+      payload: { confirm: true, period: 'DAILY', targetMinutes: 20 },
+    })
+
+    const applied = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations?actionable=true',
+    })
+    expect(applied.json().data).toHaveLength(0)
+
+    await app.close()
+  })
+})
+
+describe('GET /api/v1/recommendations/history', () => {
+  it('returns each decision with the wording it was taken on', async () => {
+    const { app } = await buildTestApp()
+    const generated = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+    const item = generated.json().data[0]
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/recommendations/${item.id}/feedback`,
+      payload: { action: 'REJECTED', reason: 'Not this month' },
+    })
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations/history',
+    })
+
+    expect(response.statusCode).toBe(200)
+    const entry = response.json().data[0]
+    expect(entry).toMatchObject({
+      recommendationId: item.id,
+      action: 'REJECTED',
+      reason: 'Not this month',
+      title: item.title,
+      recommendation: item.recommendation,
+      rationale: item.rationale,
+      status: 'REJECTED',
+      appliedAt: null,
+    })
+    expect(response.json().meta).toEqual({ count: 1, limit: 20 })
+
+    await app.close()
+  })
+
+  it('filters by action and rejects an unknown one', async () => {
+    const { app } = await buildTestApp()
+    const generated = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+    const id = generated.json().data[0].id
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/recommendations/${id}/feedback`,
+      payload: { action: 'POSTPONED' },
+    })
+
+    const postponed = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations/history?action=POSTPONED',
+    })
+    expect(postponed.statusCode).toBe(200)
+    expect(postponed.json().data).toHaveLength(1)
+
+    const rejected = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations/history?action=REJECTED',
+    })
+    expect(rejected.json().data).toHaveLength(0)
+
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations/history?action=LIKED',
+    })
+    expect(invalid.statusCode).toBe(422)
+
+    await app.close()
+  })
+
+  it('is empty before any decision is taken', async () => {
+    const { app } = await buildTestApp()
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations/history',
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().data).toEqual([])
+
     await app.close()
   })
 })
@@ -317,6 +519,57 @@ describe('POST /api/v1/recommendations/:id/apply', () => {
 
     expect(response.statusCode).toBe(409)
     expect(response.json().error.code).toBe('CONFLICT')
+
+    await app.close()
+  })
+
+  it('writes the item the learner confirmed, with its topic and day', async () => {
+    const { app, createdGoals } = await buildTestApp()
+    const generated = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+    const id = generated.json().data[0].id
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/recommendations/${id}/feedback`,
+      payload: { action: 'ACCEPTED' },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/recommendations/${id}/apply`,
+      payload: {
+        confirm: true,
+        period: 'DAILY',
+        targetMinutes: 45,
+        skillId: null,
+        topic: 'IELTS Task 2',
+        startDate: '2026-10-17T00:00:00.000Z',
+        endDate: '2026-10-17T23:59:59.999Z',
+      },
+    })
+
+    expect(response.statusCode).toBe(201)
+    expect(response.json().meta.goalId).toBe('goal-1')
+    expect(createdGoals).toHaveLength(1)
+    expect(createdGoals[0]).toMatchObject({
+      period: 'DAILY',
+      targetMinutes: 45,
+      topic: 'IELTS Task 2',
+      isActive: true,
+    })
+    // The real goal repository stores instants, so the fake sees `Date` values.
+    expect((createdGoals[0]?.['startDate'] as Date).toISOString()).toBe('2026-10-17T00:00:00.000Z')
+    expect((createdGoals[0]?.['endDate'] as Date).toISOString()).toBe('2026-10-17T23:59:59.999Z')
+
+    const history = await app.inject({
+      method: 'GET',
+      url: '/api/v1/recommendations/history',
+    })
+    expect(history.json().data[0].appliedAt).not.toBeNull()
 
     await app.close()
   })

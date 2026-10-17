@@ -17,7 +17,7 @@ import { createRecommendationService } from '../src/modules/recommendations/reco
 import type { RecommendationContext } from '../src/modules/recommendations/recommendation.context.js'
 import type { RecommendationRepository } from '../src/modules/recommendations/recommendation.repository.js'
 import type { RecommendationAggregation } from '../src/modules/recommendations/recommendation.aggregation.js'
-import { ConflictError } from '../src/shared/errors.js'
+import { ConflictError, ValidationError } from '../src/shared/errors.js'
 import {
   makeContext,
   makeGoal,
@@ -579,6 +579,7 @@ function createFakeRepository(initialActiveObjectiveId: string | null = null) {
         row.status = input.status
         row.decidedAt = input.at
         feedback.push({
+          id: `fb-${feedback.length + 1}`,
           recommendationId: input.recommendationId,
           userId: input.userId,
           action: input.action,
@@ -596,6 +597,33 @@ function createFakeRepository(initialActiveObjectiveId: string | null = null) {
       }
       return { count: row ? 1 : 0 }
     }),
+    listDecisionHistory: vi.fn(async (userId: string, filter: { action?: string; limit: number }) =>
+      feedback
+        .filter((entry) => entry['userId'] === userId)
+        .filter((entry) => (filter.action ? entry['action'] === filter.action : true))
+        .map((entry) => {
+          const row = rows.find((candidate) => candidate.id === entry['recommendationId'])
+          return {
+            id: entry['id'],
+            action: entry['action'],
+            reason: entry['reason'],
+            createdAt: entry['createdAt'],
+            recommendation: {
+              id: row?.id,
+              type: row?.type,
+              title: row?.title,
+              recommendation: row?.recommendation,
+              rationale: row?.rationale,
+              confidence: row?.confidence,
+              relatedSkillId: row?.relatedSkillId ?? null,
+              status: row?.status,
+              appliedAt: row?.appliedAt ?? null,
+              appliedGoalId: row?.appliedGoalId ?? null,
+            },
+          }
+        })
+        .slice(0, filter.limit),
+    ),
     findUser: vi.fn(async () => ({
       timezone: 'UTC',
       activeObjective: activeObjectiveId === null ? null : { id: activeObjectiveId },
@@ -815,6 +843,61 @@ describe('optional action', () => {
     })
   })
 
+  it('writes the topic and the day the learner confirmed', async () => {
+    const context = makeContext({
+      lastPractised: {
+        vocabulary: 2,
+        grammar: 2,
+        listening: 2,
+        reading: 2,
+        writing: 19,
+        speaking: 2,
+      },
+    })
+    const { service, fake } = createService(context)
+    const generated = await service.generate(USER_ID)
+    const target = generated.data.find((item) => item.type === 'SKILL')!
+
+    await service.submitFeedback(USER_ID, target.id, { action: 'MODIFIED' })
+    await service.apply(USER_ID, target.id, {
+      confirm: true,
+      period: 'DAILY',
+      targetMinutes: 45,
+      skillId: SKILL_IDS.writing,
+      topic: 'IELTS Task 2',
+      startDate: '2026-03-15T00:00:00.000Z',
+      endDate: '2026-03-15T23:59:59.999Z',
+    })
+
+    expect(fake.goals).toHaveLength(1)
+    expect(fake.goals[0]).toMatchObject({
+      period: 'DAILY',
+      targetMinutes: 45,
+      topic: 'IELTS Task 2',
+      startDate: '2026-03-15T00:00:00.000Z',
+      endDate: '2026-03-15T23:59:59.999Z',
+      isActive: true,
+      skillTargets: [{ skillId: SKILL_IDS.writing, targetMinutes: 45 }],
+    })
+  })
+
+  it('refuses an item whose day ends before it starts', async () => {
+    const { service } = createService(MISSED_GOAL_CONTEXT)
+    const generated = await service.generate(USER_ID)
+    const target = generated.data[0]!
+
+    await service.submitFeedback(USER_ID, target.id, { action: 'ACCEPTED' })
+
+    await expect(
+      service.apply(USER_ID, target.id, {
+        confirm: true,
+        targetMinutes: 20,
+        startDate: '2026-03-16T00:00:00.000Z',
+        endDate: '2026-03-15T00:00:00.000Z',
+      }),
+    ).rejects.toBeInstanceOf(ValidationError)
+  })
+
   it('refuses to apply the same recommendation twice', async () => {
     const { service } = createService(MISSED_GOAL_CONTEXT)
     const generated = await service.generate(USER_ID)
@@ -860,5 +943,88 @@ describe('listing', () => {
     const postponed = await service.list(USER_ID, { status: 'POSTPONED', limit: 20 })
     expect(postponed.data).toHaveLength(1)
     expect(postponed.data[0]?.status).toBe('POSTPONED')
+  })
+})
+
+describe('decision history', () => {
+  it('keeps the decision, the reason and the wording it was taken on', async () => {
+    const context = makeContext({
+      lastPractised: {
+        vocabulary: 2,
+        grammar: 2,
+        listening: 2,
+        reading: 2,
+        writing: 19,
+        speaking: 2,
+      },
+    })
+    const { service } = createService(context)
+    const generated = await service.generate(USER_ID)
+    const target = generated.data.find((item) => item.type === 'SKILL')!
+
+    await service.submitFeedback(USER_ID, target.id, {
+      action: 'REJECTED',
+      reason: 'Not this week',
+    })
+
+    const history = await service.history(USER_ID, { limit: 10 })
+
+    expect(history.meta).toEqual({ count: 1, limit: 10 })
+    expect(history.data[0]).toMatchObject({
+      recommendationId: target.id,
+      action: 'REJECTED',
+      reason: 'Not this week',
+      title: target.title,
+      recommendation: target.recommendation,
+      rationale: target.rationale,
+      relatedSkillId: SKILL_IDS.writing,
+      relatedSkillName: 'Writing',
+      status: 'REJECTED',
+      appliedAt: null,
+    })
+  })
+
+  it('records when a decision turned into planning data', async () => {
+    const { service } = createService(MISSED_GOAL_CONTEXT)
+    const generated = await service.generate(USER_ID)
+    const target = generated.data[0]!
+
+    await service.submitFeedback(USER_ID, target.id, { action: 'ACCEPTED' })
+    await service.apply(USER_ID, target.id, { confirm: true })
+
+    const history = await service.history(USER_ID, { limit: 10 })
+    expect(history.data[0]).toMatchObject({
+      recommendationId: target.id,
+      action: 'ACCEPTED',
+      appliedAt: '2026-03-15T12:00:00.000Z',
+      appliedGoalId: 'goal-1',
+    })
+  })
+
+  it('filters by action and keeps each decision separate', async () => {
+    const { service } = createService(MISSED_GOAL_CONTEXT)
+    const generated = await service.generate(USER_ID)
+    const target = generated.data[0]!
+
+    await service.submitFeedback(USER_ID, target.id, {
+      action: 'REJECTED',
+      reason: 'Too soon',
+    })
+    await service.submitFeedback(USER_ID, target.id, { action: 'POSTPONED' })
+
+    const all = await service.history(USER_ID, { limit: 10 })
+    expect(all.data).toHaveLength(2)
+
+    const rejected = await service.history(USER_ID, { action: 'REJECTED', limit: 10 })
+    expect(rejected.data).toHaveLength(1)
+    expect(rejected.data[0]?.reason).toBe('Too soon')
+  })
+
+  it('is empty before any decision is taken', async () => {
+    const { service } = createService(MISSED_GOAL_CONTEXT)
+    await service.generate(USER_ID)
+
+    const history = await service.history(USER_ID, { limit: 10 })
+    expect(history.data).toEqual([])
   })
 })

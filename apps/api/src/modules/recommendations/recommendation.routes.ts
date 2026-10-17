@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import {
   ApplyRecommendationSchema,
   GenerateRecommendationsSchema,
+  ListRecommendationHistoryQuerySchema,
   ListRecommendationsQuerySchema,
   RecommendationFeedbackSchema,
 } from '@lingopath/types'
@@ -52,6 +53,15 @@ const recommendationRoutes: FastifyPluginAsync<RecommendationRoutesOptions> = as
   fastify.get('/recommendations', async (request, reply) => {
     const query = ListRecommendationsQuerySchema.parse(request.query)
     const result = await service.list(resolveUserId(request), query)
+    return reply.send(result)
+  })
+
+  // GET /api/v1/recommendations/history?action=REJECTED&limit=20
+  // The decision trail. Registered before `/recommendations/:id` for clarity;
+  // the router already gives the static segment priority.
+  fastify.get('/recommendations/history', async (request, reply) => {
+    const query = ListRecommendationHistoryQuerySchema.parse(request.query)
+    const result = await service.history(resolveUserId(request), query)
     return reply.send(result)
   })
 

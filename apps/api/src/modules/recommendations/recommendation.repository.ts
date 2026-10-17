@@ -49,6 +49,8 @@ export interface NewRecommendationRow {
 export interface RecommendationListFilter {
   status?: RecommendationStatus
   type?: RecommendationType
+  /** When true, only rows the learner can still act on are returned. */
+  actionable?: boolean
   limit: number
 }
 
@@ -312,6 +314,46 @@ export function createRecommendationRepository(prisma: PrismaClient) {
       })
     },
 
+    /**
+     * The decision trail, newest first, with the wording that was decided on.
+     *
+     * Every decision is one row: a recommendation rejected on Monday and
+     * accepted on Wednesday appears twice, because the history page answers
+     * "what did I do", not "what is true now". The recommendation text is read
+     * from the stored row, so an old entry cannot be rewritten by a newer
+     * generation.
+     */
+    listDecisionHistory(userId: string, filter: { action?: RecommendationAction; limit: number }) {
+      return prisma.recommendationFeedback.findMany({
+        where: {
+          userId,
+          ...(filter.action ? { action: filter.action } : {}),
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: filter.limit,
+        select: {
+          id: true,
+          action: true,
+          reason: true,
+          createdAt: true,
+          recommendation: {
+            select: {
+              id: true,
+              type: true,
+              title: true,
+              recommendation: true,
+              rationale: true,
+              confidence: true,
+              relatedSkillId: true,
+              status: true,
+              appliedAt: true,
+              appliedGoalId: true,
+            },
+          },
+        },
+      })
+    },
+
     async getSkillNames(ids: readonly string[]) {
       if (ids.length === 0) return []
       return prisma.skill.findMany({
@@ -382,6 +424,15 @@ export function createRecommendationRepository(prisma: PrismaClient) {
           userId,
           ...(filter.status ? { status: filter.status } : {}),
           ...(filter.type ? { type: filter.type } : {}),
+          // "Actionable" is a state, not an ordering: a row the learner has
+          // accepted but not yet added to planning data is still open, and it
+          // must survive a page of older, already-decided rows.
+          ...(filter.actionable
+            ? {
+                status: filter.status ?? { in: ['NEW', 'ACCEPTED', 'MODIFIED'] },
+                appliedAt: null,
+              }
+            : {}),
         },
         orderBy: [{ generatedAt: 'desc' }, { id: 'desc' }],
         take: filter.limit,

@@ -387,6 +387,8 @@ export const GoalSchema = z.object({
   isActive: z.boolean(),
   planId: z.string().uuid().nullable(),
   objectiveId: z.string().uuid().nullable(),
+  /** Optional focus label for a plan item; `null` for a plain recurring target. */
+  topic: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   skillTargets: z.array(GoalSkillTargetSchema).optional(),
@@ -402,6 +404,8 @@ export const CreateGoalSchema = z.object({
   isActive: z.boolean().default(true),
   planId: z.string().uuid().optional(),
   objectiveId: z.string().uuid().optional(),
+  /** What this target is about, when the learner named it. */
+  topic: z.string().trim().max(120).nullable().optional(),
   skillTargets: z.array(CreateGoalSkillTargetSchema).optional(),
 })
 
@@ -1201,6 +1205,16 @@ export type GenerateRecommendations = z.infer<typeof GenerateRecommendationsSche
 export const ListRecommendationsQuerySchema = z.object({
   status: RecommendationStatusEnum.optional(),
   type: RecommendationTypeEnum.optional(),
+  /**
+   * `actionable=true` returns only what the learner can still act on: `NEW` rows
+   * plus accepted ones that have not been added to planning data yet. Without it
+   * a primary view would have to fetch every status and filter in the browser,
+   * which silently drops open rows once old batches fill the page.
+   */
+  actionable: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
 export type ListRecommendationsQuery = z.infer<typeof ListRecommendationsQuerySchema>
@@ -1218,5 +1232,45 @@ export const ApplyRecommendationSchema = z.object({
   targetMinutes: z.number().int().min(1).max(10080).optional(),
   skillId: z.string().uuid().nullable().optional(),
   startDate: z.string().datetime().optional(),
+  /** Inclusive last day of the item; a one-day entry sends the same day. */
+  endDate: z.string().datetime().optional(),
+  /** What the confirmed item is about, when the learner named it. */
+  topic: z.string().trim().max(120).nullable().optional(),
 })
 export type ApplyRecommendation = z.infer<typeof ApplyRecommendationSchema>
+
+// ─── Recommendation history (Phase 11) ───────────────────────────────────────
+//
+// One row per decision, not per recommendation: "rejected, then accepted two
+// days later" is two facts, and the page that answers "what did I do with the
+// advice I was given" has to show both. The wording is the stored wording, so a
+// later generation cannot rewrite what was decided.
+
+export interface RecommendationHistoryEntry {
+  /** The decision itself (feedback row id). */
+  id: string
+  recommendationId: string
+  action: RecommendationAction
+  /** What the learner typed, when they typed anything. */
+  reason: string | null
+  decidedAt: string
+  /** The recommendation as it read when the decision was taken. */
+  title: string
+  recommendation: string
+  rationale: string
+  type: RecommendationType
+  confidence: RecommendationConfidence
+  relatedSkillId: string | null
+  relatedSkillName: string | null
+  /** Current status of the recommendation behind this decision. */
+  status: RecommendationStatus
+  /** Set only when the learner confirmed adding it to planning data. */
+  appliedAt: string | null
+  appliedGoalId: string | null
+}
+
+export const ListRecommendationHistoryQuerySchema = z.object({
+  action: RecommendationActionEnum.optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+export type ListRecommendationHistoryQuery = z.infer<typeof ListRecommendationHistoryQuerySchema>
