@@ -76,17 +76,28 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Long-Term Plan Integration**: Goals can be linked to active long-term plans, with progress automatically filtered to plan-specific study sessions.
 - **Comprehensive Goal Management**: Create, view, edit, delete goals with period and active/inactive filters in a dedicated `/goals` interface.
 
-### 6. Learning Objectives & Exam Tracking
+### 6. Learning Objectives & Active Focus
 
-- **Exam & Custom Objectives**: Support for IELTS, TOEFL, General English, Immigration, and custom learning targets with target scores and deadlines.
-- **Exam Scheduling**: Plan and track exam dates, venues, and registration status.
+- **Multiple Objectives**: Keep as many objectives as you need at once — IELTS, TOEFL, General English, Immigration or a custom title — each with its own target score and target date.
+- **One Active Objective**: Exactly one objective is designated active (`users.active_objective_id`, unique at the database level). Plans, goals and exams default to it, so the current focus actually shapes planning instead of being a label nobody reads.
+- **Factual Signals**: The focus card lists observations with the value each one came from ("Based on: recorded target date 2026-11-01 against today") — a missing target date, a date that has passed, an exam with no recorded result, or the target you set next to the last result you recorded. Signals state facts; they never grade the learner.
 
-### 7. Consolidated Main Dashboard
+### 7. CEFR Levels & Exam Tracking
+
+- **Five Dimensions**: Record a CEFR level (A1–C2) for **overall**, **listening**, **reading**, **writing** and **speaking** — independently, and only for the dimensions that were actually assessed.
+- **Recorded, Never Inferred**: Levels come solely from assessments you enter. Study hours are never converted into a level, and the `/levels` page says so on screen. The module that computes levels cannot even read `StudySession`.
+- **Historical Progress**: Every assessment is kept with its date and method (self-reported, mock test, formal exam). The view shows the most recently *recorded* level per dimension, the earlier recording it changed from, a multi-line history chart and the full table — with edit and delete.
+- **IELTS Tracking**: Overall band plus listening, reading, writing and speaking, with the test date, the target band and the target date.
+- **Scale-Aware Scoring**: Scores are validated against the exam's own scale, not one hardcoded maximum — an IELTS band out of 9 (half-band steps) and a TOEFL iBT total out of 120 with 30-point sections are both first-class.
+- **Future-Proof Model**: The scale is an opaque descriptor stored as JSON and resolved by a preset registry, so a new scoring scheme (a revised TOEFL format, a provider-specific mock scale, a complete custom scale) is a data or preset change — no schema migration, no reinterpretation of old results.
+- **No Verdicts**: Nothing labels a learner ready, not ready or weak, and no score is predicted. A result is reported as recorded, next to the target the learner set.
+
+### 8. Consolidated Main Dashboard
 
 - **Real-Time Overview**: Single consolidated dashboard API and view at `/dashboard` bringing together today's study progress, active long-term plan, goals, weekly breakdown, skill distribution, monthly/yearly trends, and recent study activity.
 - **Robust States**: Graceful loading, error handling, and helpful empty states guiding new users to start their first session or create their first plan.
 
-### 8. Study Calendar & Streaks
+### 9. Study Calendar & Streaks
 
 - **GitHub-Style Heatmap**: A `/calendar` view of daily study activity as week-by-week columns, colour-coded by how long you studied.
 - **Flexible Ranges**: Current year, previous year, or any custom range up to two years.
@@ -95,7 +106,7 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Timezone-Correct Streaks**: Current and longest streak, computed in the user's timezone with a configurable qualifying threshold (20 minutes by default). Multiple short sessions on one day add up.
 - **Boundary-Proof**: Midnights, DST transitions (23- and 25-hour days), month ends, year ends and leap days are all covered by tests; missed days break the run, a day still in progress never does.
 
-### 9. Study Analytics
+### 10. Study Analytics
 
 - **Consolidated Analytics Page**: `/analytics` for one selected window — 7 / 30 / 90 days, this year, last year, or a custom range up to two years.
 - **Headline Metrics**: total study time, session count, active and inactive days, average daily time, average session length, longest session, current and longest streak, and the share of days that met the daily goal.
@@ -181,7 +192,11 @@ The web application leverages Next.js 14 App Router:
 
 ### Core Entities
 
-- **`User`**: Root identity record storing user configuration such as `timezone`.
+- **`User`**: Root identity record storing user configuration such as `timezone` and `activeObjectiveId`.
+- **`LearningObjective`**: One of any number of objectives (`type`, `title`, `targetScore`, `targetDate`, `isActive`). The one referenced by `User.activeObjectiveId` is the active focus.
+- **`LevelAssessment`**: One recorded CEFR assessment per row, with an independent nullable level for `cefrLevel` (overall), `listeningLevel`, `readingLevel`, `writingLevel` and `speakingLevel` — `null` means "not assessed". Levels are recorded by the learner and never inferred from study time.
+- **`Exam`**: A planned or taken exam (`type`, `title`, `scheduledAt`, `status`, `targetScore`, `targetDate`, `scoreScale`). `scoreScale` is an opaque JSON scoring-scale descriptor, so a new scoring scheme never needs a schema change.
+- **`ExamResult`**: A recorded result (`takenAt`, `isMock`, optional `overallScore`, flexible `skillScores` JSON), validated against the exam's own scale.
 - **`LongTermPlan`**: High-level learning plan (`title`, `startDate`, `endDate`, `targetMinutes`, `status`, `objectiveId`, `examId`).
 - **`PlanMilestone`**: Time-bounded phase within a plan (`ordering`, `startDate`, `endDate`, `targetMinutes`, `status`).
 - **`StudySession`**: Atomic study record (`startedAt`, `endedAt`, `durationMinutes`, `skillId`, `categoryId`, `planId`, `milestoneId`). **Sole source of truth for study time.**
@@ -210,14 +225,14 @@ lingoPath/
 │   ├── api/                     # Fastify backend application
 │   │   ├── src/
 │   │   │   ├── modules/         # Domain modules
-│   │   │   │   ├── assessments/ # CEFR level evaluation
+│   │   │   │   ├── assessments/ # CEFR levels per dimension (overall + 4 skills) & history
 │   │   │   │   ├── analytics/   # Study-time analytics, trends, comparisons & plan pacing
 │   │   │   │   ├── calendar/    # Study calendar heatmap, day drill-down & streaks
 │   │   │   │   ├── categories/  # Session category management
-│   │   │   │   ├── exams/       # Exam & mock test tracking
+│   │   │   │   ├── exams/       # Exam tracking, scoring scales, targets & recorded results
 │   │   │   │   ├── goals/       # Recurring goal engine
 │   │   │   │   ├── health/      # Health check probes
-│   │   │   │   ├── objectives/  # Learning objectives
+│   │   │   │   ├── objectives/  # Multiple objectives, the active one & its factual signals
 │   │   │   │   ├── plans/       # Long-term plans & milestone services
 │   │   │   │   ├── sessions/    # Study session recording & timer stats
 │   │   │   │   └── skills/      # Skill taxonomy
@@ -235,11 +250,15 @@ lingoPath/
 │       │   │       ├── analytics/
 │       │   │       ├── calendar/ # Study heatmap, streaks & day detail (/calendar)
 │       │   │       ├── dashboard/
+│       │   │       ├── exams/    # Exams, targets & recorded results (/exams)
 │       │   │       ├── goals/    # Goal tracking & management (/goals)
+│       │   │       ├── levels/   # CEFR levels, assessment history & active focus (/levels)
 │       │   │       ├── planning/ # Long-Term Plan views (/planning, /planning/[id])
 │       │   │       └── study/    # Study tracking, live timer (/study, /study/timer, /study/history)
 │       │   ├── components/      # UI components
 │       │   │   ├── goals/       # Goal cards, lists, creation/detail dialogs, progress displays
+│       │   │   ├── levels/      # Dimension cards, level history chart, assessment dialog & focus card
+│       │   │   ├── exams/       # Exam cards, exam/result dialogs, score history chart
 │       │   │   ├── calendar/    # Heatmap grid, streak cards, day detail & threshold dialogs
 │       │   │   ├── layout/      # Sidebar, top-bar, navigation
 │       │   │   ├── analytics/   # Summary cards, trend/skill charts, comparison & plan pacing
@@ -247,7 +266,7 @@ lingoPath/
 │       │   │   ├── study/       # Study timer, quick-add modal, stats, today sessions
 │       │   │   ├── shared/      # Empty, loading, and error states
 │       │   │   └── ui/          # Radix UI primitives & buttons
-│       │   └── lib/             # API client, React Query hooks (use-goals, use-sessions, use-plans, use-study-timer), utilities
+│       │   └── lib/             # API client, React Query hooks (use-goals, use-sessions, use-plans, use-levels, use-exams, use-objectives, use-study-timer), utilities
 │       └── public/              # Static assets
 │
 ├── packages/
@@ -419,6 +438,41 @@ All application endpoints are versioned under `/api/v1` (with the exception of `
 | `GET`           | `/api/v1/skills`     | List available skill taxonomy domains                                              |
 | `GET`           | `/api/v1/categories` | List default and user-defined study categories                                     |
 | `GET`           | `/api/v1/objectives` | List learning objectives (IELTS, TOEFL, etc.)                                      |
+| `GET`           | `/api/v1/objectives/active` | The active objective plus its derived facts and factual signals            |
+| `PUT`           | `/api/v1/objectives/active` | Designate the active objective, or clear it with `{"objectiveId": null}`   |
+| `POST`          | `/api/v1/objectives` | Create an objective (target score and target date optional)                        |
+| `PUT` / `PATCH` | `/api/v1/objectives/:id` | Update an objective                                                           |
+| `DELETE`        | `/api/v1/objectives/:id` | Delete an objective; the focus clears itself if it pointed here            |
+
+---
+
+### CEFR Levels (`/api/v1/assessments`)
+
+| Method          | Endpoint                      | Description                                                                                     |
+| --------------- | ----------------------------- | ----------------------------------------------------------------------------------------------- |
+| `GET`           | `/api/v1/assessments`         | List recorded assessments (cursor pagination, newest first)                                      |
+| `GET`           | `/api/v1/assessments/overview` | Most recently recorded level per dimension, the change since the earlier recording, and history |
+| `GET`           | `/api/v1/assessments/:id`     | Get a single assessment                                                                          |
+| `POST`          | `/api/v1/assessments`         | Record an assessment (at least one of the five dimensions)                                       |
+| `PUT` / `PATCH` | `/api/v1/assessments/:id`     | Update an assessment; `null` clears a dimension, an omitted field leaves it alone                |
+| `DELETE`        | `/api/v1/assessments/:id`     | Delete an assessment                                                                             |
+
+The overview payload carries `basis: "RECORDED_ASSESSMENTS"`, the dimension display order, the `rankByLevel` map and a `levels` map per history entry, so a client never has to re-state the A1–C2 order, the dimension list or which column holds which dimension.
+
+---
+
+### Exams & Results (`/api/v1/exams`)
+
+| Method          | Endpoint                   | Description                                                                                 |
+| --------------- | -------------------------- | ------------------------------------------------------------------------------------------- |
+| `GET`           | `/api/v1/exams`            | List exams with their resolved scale, `?type=` and `?status=` filters                        |
+| `GET`           | `/api/v1/exams/scales`     | The built-in scoring scales and each exam type's default                                     |
+| `GET`           | `/api/v1/exams/:id`        | Get one exam with its scale and recorded results                                             |
+| `POST`          | `/api/v1/exams`            | Create an exam, with test date, target and optional `scoreScale` descriptor                   |
+| `PUT` / `PATCH` | `/api/v1/exams/:id`        | Update an exam; explicit `null` clears a target or the scale                                 |
+| `DELETE`        | `/api/v1/exams/:id`        | Delete an exam and its recorded results                                                      |
+| `POST`          | `/api/v1/exams/:id/results` | Record a result, validated against that exam's own scale                                    |
+| `GET`           | `/api/v1/exams/:id/results` | List the results recorded for an exam                                                       |
 
 ---
 
@@ -467,4 +521,21 @@ The payload contains `summary`, `skills`, `trends`, `comparison`, `plans` and `g
 - **Intensity buckets**: default `0 | 1-20 | 21-40 | 41-60 | 61-90 | 90+` minutes, configurable per user (up to seven bounds). The UI legend always comes from the server, so screen and data cannot disagree.
 - **Timezones**: everything is stored in UTC and reported in the user's configured timezone. 23-hour and 25-hour DST days, skipped local midnights and date-line skips are handled by the timezone utility and covered by `apps/api/tests/timezone.test.ts`.
 
+---
+
+## CEFR Level & Exam Scoring Rules
+
+- **Five dimensions, independently optional**: `overall`, `listening`, `reading`, `writing`, `speaking`. An assessment must record at least one; the others stay `null`, which reads as "not assessed" — never as "unknown" and never as an estimate. An update merges onto the stored row, so a newer assessment that skipped a dimension does not erase that dimension's earlier recording.
+- **"Most recently recorded" is per dimension**: the level shown for reading comes from the newest assessment that actually recorded reading, not from the newest assessment overall.
+- **Rank, not vibes**: A1–C2 map to ranks 1–6 in one place (`cefrRank`). A change is the difference between two recorded ranks; the first recording has no change to report.
+- **IELTS**: overall band plus the four skills, the test date, the target band and the target date. The band scale is 0–9 in half-band steps.
+- **TOEFL**: iBT total out of 120 with four 30-point sections. The model never hardcodes this: it is one preset descriptor, so a revised format is a new descriptor rather than a schema change.
+- **Scores are stored as reported**: the overall is not recomputed from the sections, and a result with only section scores keeps a `null` overall instead of a fabricated total.
+- **`step` is a rendering hint**: it drives the decimals shown (`7.5` vs `110`) and the input increments. It is deliberately not enforced, because mock providers report finer precision than the official scale.
+- **Only the day the learner picked**: date-only fields are stored at UTC midnight and read back from their UTC date, so a date never shifts a day for someone west of UTC (`dayKeyFromInstant` in `apps/web/src/lib/calendar.ts`).
+
 8. **Analytics Aggregate in SQL, Not in Node**: analytics windows are computed by one grouped query (`date_trunc` over `AT TIME ZONE`) plus SQL aggregates, so only a bounded set of (day, skill) rows reaches the application. Percentages use one shared definition (`computeStudyProgressPercent`), and period comparisons report "New" rather than an infinite change when the previous window was empty.
+
+9. **Levels Are Recorded, Never Inferred — and Nothing Is Graded**: a CEFR level exists only because the learner recorded an assessment. `apps/api/src/modules/assessments/level.domain.ts` cannot read `StudySession` at all; the overview is empty until an assessment exists; and no code path converts hours studied into a level, a predicted score or a readiness verdict. Where a comparison is shown (a target band against a recorded result, a level against the previous recording), it is arithmetic on values the learner entered, and the observation carries the fact it came from. The signal module (`apps/api/src/modules/objectives/objective.signals.ts`) has no database dependency, and both it and the level domain are covered by guard tests that fail on readiness vocabulary.
+
+10. **Scales Are Data, Not Columns**: an exam's scoring scale is an opaque descriptor (`{ key, label, min, max, step, sections }`) stored in `exams.score_scale` and resolved by a preset registry (`apps/api/src/modules/exams/exam.scoring.ts`). Scores are validated against their own exam's scale, so an IELTS band out of 9 and a TOEFL total out of 120 coexist without a redesign — and a future scoring change is a new preset or a stored descriptor rather than a migration. The resolved scale is sent to the client (including how many decimals to render and what to call the target), so the UI never restates a scoring rule.

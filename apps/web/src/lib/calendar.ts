@@ -128,6 +128,36 @@ export function formatDayShortLabel(dayKey: string): string {
   return `${MONTH_SHORT_LABELS[month - 1]} ${day}`
 }
 
+/**
+ * The UTC calendar day of a stored instant.
+ *
+ * Date-only fields — an assessment date, an exam date, a target date — are stored
+ * as the instant at UTC midnight of the day the learner picked, so reading the day
+ * back from its UTC date returns exactly that day in every browser timezone. Using
+ * `toLocaleDateString()` instead would show the day before for anyone west of UTC.
+ */
+export function dayKeyFromInstant(instant: string): string {
+  return instant.slice(0, 10)
+}
+
+/**
+ * `<input type="date">` value for a stored instant.
+ *
+ * Pairs with {@link todayInputValue}: date-only fields round trip through UTC
+ * midnight, so the day the learner picked is the day the form shows back.
+ */
+export function dateInputValue(instant: string): string {
+  return dayKeyFromInstant(instant)
+}
+
+/** Today as a `YYYY-MM-DD` value for a date input, from the browser's local date. */
+export function todayInputValue(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate(),
+  ).padStart(2, '0')}`
+}
+
 export function formatMonthLabel(dayKey: string): string {
   const { month } = parseDayKeyParts(dayKey)
   return MONTH_LABELS[month - 1] ?? ''

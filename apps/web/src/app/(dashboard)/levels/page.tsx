@@ -1,18 +1,12 @@
 import type { Metadata } from 'next'
-import { TrendingUp } from 'lucide-react'
-import { PlaceholderPage } from '@/components/shared/placeholder-page'
+import { LevelsPageClient } from '@/components/levels/levels-page-client'
 
 export const metadata: Metadata = {
-  title: 'CEFR Levels',
+  title: 'CEFR Levels | LingoPath',
+  description:
+    'Record your CEFR levels — overall, listening, reading, writing and speaking — and follow how they change over time.',
 }
 
 export default function LevelsPage() {
-  return (
-    <PlaceholderPage
-      title="CEFR Levels"
-      description="Track your CEFR language proficiency assessments (A1 to C2) and milestone progress over time."
-      icon={TrendingUp}
-      phase={3}
-    />
-  )
+  return <LevelsPageClient />
 }

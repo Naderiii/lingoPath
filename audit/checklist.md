@@ -1,4 +1,4 @@
-# Audit checklist — LingoPath Phases 1–7 (and Phase 8 follow-up)
+# Audit checklist — LingoPath Phases 1–7 (and the Phase 8 and Phase 9 follow-ups)
 
 Self-contained working record for the audit. `AUDIT_REPORT.md` in the repository root is the deliverable;
 this file is the phase → component → test map behind it.
@@ -22,6 +22,7 @@ Repository: Turborepo + pnpm workspaces — `apps/api` (Fastify + Prisma), `apps
 | 6 Dashboard | Consolidated dashboard endpoint + view, cards, charts | `apps/api/src/modules/dashboard/*`, `apps/web/src/components/dashboard/*` | `tests/dashboard-timezone.test.ts` (new), `tests/dashboard.test.ts` |
 | 7 Calendar + streak | Heatmap, day drill-down, streaks, thresholds, tz utility | `apps/api/src/modules/calendar/*`, `apps/api/src/shared/{timezone,current-user}.ts`, `apps/web/src/components/calendar/*` | `tests/{timezone,calendar-domain,streak,calendar,session-streak,goal-periods}.test.ts` |
 | 8 Analytics (follow-up) | Consolidated analytics endpoint, SQL-side aggregation, `/analytics` page with Recharts | `apps/api/src/modules/analytics/*`, `apps/web/src/components/analytics/*`, `apps/web/src/lib/{analytics.ts,hooks/use-analytics.ts}` | `tests/analytics.test.ts` (34 cases), `apps/web/src/lib/analytics.test.ts`, `apps/web/src/components/analytics/analytics.test.tsx` |
+| 9 CEFR levels + exam tracking (follow-up) | Per-dimension CEFR assessments with history, scale-aware exam targets and results, multiple objectives with one active focus, and the `/levels` + `/exams` views | `apps/api/src/modules/assessments/*`, `apps/api/src/modules/exams/*`, `apps/api/src/modules/objectives/*`, `apps/web/src/components/{levels,exams}/*`, `apps/web/src/lib/{levels,exams}.ts`, `apps/web/src/lib/hooks/use-{levels,exams,objectives}.ts` | `tests/{levels,exam-scoring,active-objective}.test.ts` (53 cases), `apps/web/src/components/{levels,exams}/*.test.tsx` (21 cases) |
 
 ## Cross-cutting checklist
 
@@ -40,9 +41,9 @@ Repository: Turborepo + pnpm workspaces — `apps/api` (Fastify + Prisma), `apps
 | 11 | Query invalidation after mutations | `apps/web/src/lib/hooks/*` | PASS | session/goal/plan/calendar/analytics hooks invalidate their query keys |
 | 12 | Loading / empty / error states | `apps/web/src/components/*` | PASS | `tests/analytics.test.tsx`, `tests/calendar.test.tsx` cover all three |
 | 13 | Dead code, placeholders presented as real data | repo-wide | PASS (after fixes) | dashboard placeholder id fixed; three dead test imports removed; lint 0 warnings |
-| 14 | Test coverage vs claimed rules | `apps/api/tests`, web `*.test.*` | PARTIAL | 264 api + 80 web tests; objectives/skills/assessments/exams routes still thin |
+| 14 | Test coverage vs claimed rules | `apps/api/tests`, web `*.test.*` | PARTIAL | 264 api + 80 web tests at audit time; objectives/skills/assessments/exams routes still thin. Phase 9 follow-up: +60 api and +21 web tests covering the CEFR level domain, the exam scoring scales, the active objective and both new views — at service/domain and component level; **route-level** (`app.inject`) tests are still absent, and `apps/api/tsconfig.json` excludes `tests/`, so `pnpm typecheck` does not check the API test files (a scratch config covering `src` + `tests` was used to check the new ones, and it surfaced six pre-existing type errors in `tests/analytics.test.ts` and `tests/plan.test.ts`) |
 | 15 | Build / typecheck / lint / production build | all workspaces | PASS | see report section E |
-| 16 | Live database behaviour (cascades, raw SQL, `db push`) | prisma + postgres | BLOCKED | no PostgreSQL/Docker in this environment |
+| 16 | Live database behaviour (cascades, raw SQL, `db push`) | prisma + postgres | BLOCKED | no PostgreSQL/Docker in this environment. Phase 9's schema changes are affected by the same gap: the four new nullable level columns plus `cefr_level` becoming nullable, `exams.target_score` / `target_date` / `score_scale`, `users.active_objective_id` (unique FK to `learning_objectives`, `ON DELETE SET NULL`), the nullable `exam_results.overall_score` and the new `Exam` relation were checked with `prisma validate` and client generation only — `db push` was never run, so "every change is a widening" is reasoned from the schema rather than observed |
 
 ## Method
 

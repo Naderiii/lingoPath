@@ -197,6 +197,88 @@ export type CreateLearningObjective = z.infer<typeof CreateLearningObjectiveSche
 export const UpdateLearningObjectiveSchema = CreateLearningObjectiveSchema.partial()
 export type UpdateLearningObjective = z.infer<typeof UpdateLearningObjectiveSchema>
 
+// ─── Multiple Objectives & the Active Objective (Phase 9) ─────────────────────
+//
+// Several objectives can exist at once (IELTS, TOEFL, General English,
+// Immigration, custom). Exactly one may be designated *active*: that is the
+// objective plan/exam defaults and the signals below follow. The designation
+// lives in `users.active_objective_id`, so "at most one active objective" is a
+// database guarantee rather than a convention every writer has to remember.
+
+export const SetActiveObjectiveSchema = z.object({
+  /** `null` clears the focus without deleting any objective. */
+  objectiveId: z.string().uuid().nullable(),
+})
+
+export type SetActiveObjective = z.infer<typeof SetActiveObjectiveSchema>
+
+/** Why the active objective is missing, so the UI can say something useful. */
+export type ActiveObjectiveStatus = 'SET' | 'NONE_SET' | 'NONE_CREATED'
+
+/**
+ * One factual observation about the active objective.
+ *
+ * `basedOn` names the explicit fact the signal came from — a date or score the
+ * learner recorded, or a field that is empty. Signals never carry readiness or
+ * ability verdicts, and are never derived from study time; the module that
+ * builds them (`apps/api/src/modules/objectives/objective.signals.ts`) documents
+ * that boundary and is covered by a guard test.
+ */
+export interface ObjectiveSignal {
+  id: string
+  kind: 'OBJECTIVE' | 'DATA_GAP' | 'TIMELINE' | 'RECORDED_SCORE'
+  title: string
+  detail: string
+  basedOn: string
+}
+
+export interface ActiveObjectiveExamSummary {
+  id: string
+  title: string
+  type: ExamType
+  status: ExamStatus
+  scheduledAt: string | null
+  targetScore: number | null
+  targetDate: string | null
+}
+
+export interface ActiveObjectiveLatestResult {
+  examId: string
+  examTitle: string
+  takenAt: string
+  isMock: boolean
+  overallScore: number | null
+  skillScores: Record<string, number>
+}
+
+export interface ActiveObjectiveLatestAssessment {
+  id: string
+  assessedAt: string
+  method: AssessmentMethod
+  cefrLevel: CefrLevel | null
+}
+
+/**
+ * Everything the planning UI needs about the current focus, resolved server-side
+ * in the learner's timezone so the client never recomputes a day countdown.
+ */
+export interface ActiveObjectiveContext {
+  objective: LearningObjective | null
+  status: ActiveObjectiveStatus
+  timezone: string
+  today: string
+  /** Whole days from today to `targetDate`; negative once the date has passed. */
+  daysUntilTargetDate: number | null
+  isTargetDatePassed: boolean
+  linkedPlanCount: number
+  linkedGoalCount: number
+  linkedExams: ActiveObjectiveExamSummary[]
+  /** Most recent exam result recorded against one of the linked exams. */
+  latestRecordedResult: ActiveObjectiveLatestResult | null
+  latestAssessment: ActiveObjectiveLatestAssessment | null
+  signals: ObjectiveSignal[]
+}
+
 // ─── LongTermPlan & PlanMilestone ───────────────────────────────────────────
 
 export const PlanMilestoneSchema = z.object({
@@ -339,10 +421,25 @@ export type ListGoalsQuery = z.infer<typeof ListGoalsQuerySchema>
 
 // ─── LevelAssessment (CEFR) ──────────────────────────────────────────────────
 
+// Phase 9 — a CEFR assessment records a level per dimension. All five are
+// optional because an assessment only covers what was actually measured: a
+// self-assessment may rate speaking alone, a formal exam may report all four
+// skills. `null` means "not assessed" — never "unknown" and never "estimated".
+//
+// Levels are recorded, never inferred. Nothing here links an assessment to study
+// time, and no endpoint derives a level from hours studied.
+
+export type LevelDimension = 'overall' | 'listening' | 'reading' | 'writing' | 'speaking'
+
 export const LevelAssessmentSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
-  cefrLevel: CefrLevelEnum,
+  /** Overall level of this assessment. */
+  cefrLevel: CefrLevelEnum.nullable(),
+  listeningLevel: CefrLevelEnum.nullable(),
+  readingLevel: CefrLevelEnum.nullable(),
+  writingLevel: CefrLevelEnum.nullable(),
+  speakingLevel: CefrLevelEnum.nullable(),
   assessedAt: z.string().datetime(),
   method: AssessmentMethodEnum,
   notes: z.string().nullable(),
@@ -352,14 +449,36 @@ export const LevelAssessmentSchema = z.object({
 
 export type LevelAssessment = z.infer<typeof LevelAssessmentSchema>
 
+/**
+ * The "at least one dimension recorded" rule lives in the assessment service
+ * rather than here, so create and update share one definition and an update can
+ * be validated against the merged row.
+ */
 export const CreateLevelAssessmentSchema = z.object({
-  cefrLevel: CefrLevelEnum,
+  cefrLevel: CefrLevelEnum.optional(),
+  listeningLevel: CefrLevelEnum.optional(),
+  readingLevel: CefrLevelEnum.optional(),
+  writingLevel: CefrLevelEnum.optional(),
+  speakingLevel: CefrLevelEnum.optional(),
   assessedAt: z.string().datetime(),
   method: AssessmentMethodEnum,
   notes: z.string().max(2000).optional(),
 })
 
 export type CreateLevelAssessment = z.infer<typeof CreateLevelAssessmentSchema>
+
+export const UpdateLevelAssessmentSchema = z.object({
+  cefrLevel: CefrLevelEnum.nullable().optional(),
+  listeningLevel: CefrLevelEnum.nullable().optional(),
+  readingLevel: CefrLevelEnum.nullable().optional(),
+  writingLevel: CefrLevelEnum.nullable().optional(),
+  speakingLevel: CefrLevelEnum.nullable().optional(),
+  assessedAt: z.string().datetime().optional(),
+  method: AssessmentMethodEnum.optional(),
+  notes: z.string().max(2000).nullable().optional(),
+})
+
+export type UpdateLevelAssessment = z.infer<typeof UpdateLevelAssessmentSchema>
 
 export const ListLevelAssessmentsQuerySchema = z.object({
   cursor: z.string().optional(),
@@ -368,14 +487,139 @@ export const ListLevelAssessmentsQuerySchema = z.object({
 
 export type ListLevelAssessmentsQuery = z.infer<typeof ListLevelAssessmentsQuerySchema>
 
+/**
+ * The most recently *recorded* level for one dimension, with the assessment it
+ * came from. `previous*` is the recording before it, so the UI can show a change
+ * without inventing a baseline.
+ */
+export interface LevelDimensionSnapshot {  dimension: LevelDimension
+  assessmentId: string
+  level: CefrLevel
+  /** `A1 → 1 … C2 → 6`. The only ordering rule for CEFR levels. */
+  rank: number
+  assessedAt: string
+  method: AssessmentMethod
+  previousLevel: CefrLevel | null
+  previousRank: number | null
+  previousAssessedAt: string | null
+  /** `null` when this is the first recording for the dimension. */
+  changeDirection: 'up' | 'down' | 'same' | null
+  changeSteps: number | null
+}
+
+/** Levels of one assessment, keyed by dimension. `null` = not assessed. */
+export interface LevelAssessmentLevels {
+  overall: CefrLevel | null
+  listening: CefrLevel | null
+  reading: CefrLevel | null
+  writing: CefrLevel | null
+  speaking: CefrLevel | null
+}
+
+/**
+ * One history entry: the stored assessment plus its per-dimension levels.
+ *
+ * `levels` is computed by the API, so a client never needs to know which column
+ * holds which dimension.
+ */
+export interface LevelAssessmentEntry extends LevelAssessment {
+  levels: LevelAssessmentLevels
+}
+
+export interface LevelOverviewResponse {
+  /**
+   * Constant marker that every level here comes from an assessment the learner
+   * recorded. Kept in the contract so the UI can state the provenance of the
+   * numbers on screen instead of implying they were measured some other way.
+   */
+  basis: 'RECORDED_ASSESSMENTS'
+  timezone: string
+  today: string
+  /** Display order, decided by the API so the UI cannot drift from it. */
+  dimensions: LevelDimension[]
+  rankByLevel: Record<CefrLevel, number>
+  current: Record<LevelDimension, LevelDimensionSnapshot | null>
+  /** Assessments, newest first, bounded by `limit`. */
+  history: LevelAssessmentEntry[]
+  totalAssessments: number
+  hasMore: boolean
+  nextCursor: string | null
+  limit: number
+}
+
 // ─── Exam & ExamResult ───────────────────────────────────────────────────────
+
+// Phase 9 — exam scoring.
+//
+// Scores are not compared against one hardcoded maximum: `Exam.scoreScale`
+// carries a scale descriptor that the API resolves (see
+// `apps/api/src/modules/exams/exam.scoring.ts`) and every score is validated
+// against *its own exam's* scale. That is what lets an IELTS band (0–9, step 0.5)
+// and a TOEFL total (0–120) live in the same columns, and what makes a future
+// scoring change a preset change instead of a schema migration.
+
+export interface ExamScoreSection {
+  key: string
+  label: string
+  max: number | null
+}
+
+export interface ExamScoreScale {
+  key: string
+  label: string
+  kind: 'BAND' | 'TOTAL' | 'CUSTOM'
+  min: number
+  max: number | null
+  step: number | null
+  /** Decimals to render with — `1` for an IELTS band, `0` for a TOEFL total. */
+  decimals: number
+  /** What `Exam.targetScore` means on this scale: "Target band" / "Target score". */
+  targetLabel: string
+  sections: ExamScoreSection[]
+}
+
+/** Where an exam's effective scale came from — shown so a default is never mistaken for a choice. */
+export type ExamScaleSource = 'EXAM' | 'TYPE_DEFAULT' | 'NONE'
+
+/**
+ * Accepted input for `Exam.scoreScale`: a preset key, that preset with explicit
+ * overrides, or a complete custom definition. The API resolves what was sent
+ * into a full `ExamScoreScale` and rejects an incomplete unknown key.
+ */
+export const ExamScoreScaleInputSchema = z.object({
+  key: z.string().min(1).max(60),
+  label: z.string().min(1).max(80).optional(),
+  kind: z.enum(['BAND', 'TOTAL', 'CUSTOM']).optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().nullable().optional(),
+  step: z.number().finite().positive().nullable().optional(),
+  targetLabel: z.string().min(1).max(60).optional(),
+  sections: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(40),
+        label: z.string().min(1).max(60).optional(),
+        max: z.number().finite().nullable().optional(),
+      }),
+    )
+    .optional(),
+})
+
+export type ExamScoreScaleInput = z.infer<typeof ExamScoreScaleInputSchema>
+
+export interface ExamScoreScaleListResponse {
+  data: ExamScoreScale[]
+  /** Default scale key per exam type; `null` when a type has no built-in scale. */
+  defaults: Record<ExamType, string | null>
+}
 
 export const ExamResultSchema = z.object({
   id: z.string().uuid(),
   examId: z.string().uuid(),
   isMock: z.boolean(),
   takenAt: z.string().datetime(),
-  overallScore: z.number(),
+  /** Recorded as reported; `null` when only section scores were recorded. */
+  overallScore: z.number().nullable(),
   skillScores: z.record(z.string(), z.number()), // e.g. { listening: 7.5, reading: 8.0 }
   notes: z.string().nullable(),
   createdAt: z.string().datetime(),
@@ -384,11 +628,16 @@ export const ExamResultSchema = z.object({
 
 export type ExamResult = z.infer<typeof ExamResultSchema>
 
+/**
+ * Only the outer shape is validated here (finite, non-negative). The exam's own
+ * scale decides the real bounds, so a TOEFL total of 120 is valid while an IELTS
+ * band above 9 is not — and neither rule is duplicated in this schema.
+ */
 export const CreateExamResultSchema = z.object({
   isMock: z.boolean().default(false),
   takenAt: z.string().datetime(),
-  overallScore: z.number().min(0).max(100),
-  skillScores: z.record(z.string(), z.number().min(0).max(100)),
+  overallScore: z.number().finite().nonnegative().optional(),
+  skillScores: z.record(z.string(), z.number().finite().nonnegative()).optional(),
   notes: z.string().max(2000).optional(),
 })
 
@@ -403,6 +652,9 @@ export const ExamSchema = z.object({
   scheduledAt: z.string().datetime().nullable(),
   venue: z.string().nullable(),
   status: ExamStatusEnum,
+  targetScore: z.number().nullable(),
+  targetDate: z.string().datetime().nullable(),
+  scoreScale: ExamScoreScaleInputSchema.nullable(),
   notes: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -411,6 +663,14 @@ export const ExamSchema = z.object({
 
 export type Exam = z.infer<typeof ExamSchema>
 
+/** An exam plus the scale its scores are read against, resolved by the API. */
+export interface ExamWithScale extends Exam {
+  scale: ExamScoreScale | null
+  scaleSource: ExamScaleSource
+  /** Present when the exam is linked to an objective. */
+  objective?: { id: string; title: string } | null
+}
+
 export const CreateExamSchema = z.object({
   type: ExamTypeEnum,
   title: z.string().min(1).max(150),
@@ -418,12 +678,27 @@ export const CreateExamSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   venue: z.string().max(200).optional(),
   status: ExamStatusEnum.default('PLANNED'),
+  targetScore: z.number().finite().nonnegative().optional(),
+  targetDate: z.string().datetime().optional(),
+  scoreScale: ExamScoreScaleInputSchema.optional(),
   notes: z.string().max(2000).optional(),
 })
 
 export type CreateExam = z.infer<typeof CreateExamSchema>
 
-export const UpdateExamSchema = CreateExamSchema.partial()
+/**
+ * Explicit `null` clears a stored value; an omitted field is left untouched.
+ * The nullable set is narrower than `.partial()` alone, which cannot express the
+ * difference between "leave it" and "remove it".
+ */
+export const UpdateExamSchema = CreateExamSchema.partial().extend({
+  objectiveId: z.string().uuid().nullable().optional(),
+  scheduledAt: z.string().datetime().nullable().optional(),
+  targetScore: z.number().finite().nonnegative().nullable().optional(),
+  targetDate: z.string().datetime().nullable().optional(),
+  scoreScale: ExamScoreScaleInputSchema.nullable().optional(),
+})
+
 export type UpdateExam = z.infer<typeof UpdateExamSchema>
 
 export const ListExamsQuerySchema = z.object({

@@ -5,6 +5,7 @@ import { X, Plus, Trash2 } from 'lucide-react'
 import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useCreateGoal, type CreateGoalInput } from '@/lib/hooks/use-goals'
+import { useActiveObjective, useObjectives } from '@/lib/hooks/use-objectives'
 import { usePlans } from '@/lib/hooks/use-plans'
 import { apiClient } from '@/lib/api-client'
 import type { GoalPeriod } from '@lingopath/types'
@@ -30,12 +31,15 @@ function localDayKey(value: Date): string {
 export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) {
   const createGoal = useCreateGoal()
   const { data: plansData } = usePlans('ACTIVE')
+  const activeQuery = useActiveObjective()
+  const objectivesQuery = useObjectives()
 
   const [period, setPeriod] = useState<GoalPeriod>('WEEKLY')
   const [targetMinutes, setTargetMinutes] = useState(600) // 10 hours default
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [planId, setPlanId] = useState('')
+  const [objectiveId, setObjectiveId] = useState('')
   const [skills, setSkills] = useState<Skill[]>([])
   const [skillTargets, setSkillTargets] = useState<{ skillId: string; targetMinutes: number }[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +53,13 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
         .catch(() => setError('Failed to load skills'))
     }
   }, [open])
+
+  // A new goal follows the active objective: that is how the current focus reaches
+  // planning. The learner can still pick another one, or none.
+  useEffect(() => {
+    if (!open || activeQuery.isLoading) return
+    setObjectiveId(activeQuery.data?.objective?.id ?? '')
+  }, [open, activeQuery.isLoading, activeQuery.data?.objective?.id])
 
   // Auto-calculate dates based on period
   useEffect(() => {
@@ -124,6 +135,7 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
         endDate: new Date(endDate).toISOString(),
         isActive: true,
         ...(planId ? { planId } : {}),
+        ...(objectiveId ? { objectiveId } : {}),
         ...(skillTargets.length > 0 ? { skillTargets } : {}),
       }
 
@@ -141,6 +153,7 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
     setStartDate('')
     setEndDate('')
     setPlanId('')
+    setObjectiveId('')
     setSkillTargets([])
     setError(null)
   }
@@ -248,6 +261,30 @@ export function CreateGoalDialog({ open, onOpenChange }: CreateGoalDialogProps) 
                   />
                 </div>
               </div>
+
+              {/* Objective — defaults to the active one */}
+              {objectivesQuery.data && objectivesQuery.data.data.length > 0 && (
+                <div>
+                  <label className="text-foreground mb-2 block text-sm font-medium">
+                    Objective (Optional)
+                  </label>
+                  <select
+                    value={objectiveId}
+                    onChange={(e) => setObjectiveId(e.target.value)}
+                    className="border-input bg-background text-foreground w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="">None</option>
+                    {objectivesQuery.data.data
+                      .filter((objective) => objective.isActive)
+                      .map((objective) => (
+                        <option key={objective.id} value={objective.id}>
+                          {objective.title}
+                          {objective.id === activeQuery.data?.objective?.id ? ' (active)' : ''}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
 
               {/* Link to Plan */}
               {plansData && plansData.data.length > 0 && (
