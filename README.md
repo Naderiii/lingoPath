@@ -116,6 +116,17 @@ Self-directed language learners often struggle with long-term consistency, miles
 - **Long-Term Plan Analytics**: planned vs actual, elapsed calendar time vs study progress, a pace verdict with the daily minutes needed to catch up, milestone performance, and monthly and weekly performance.
 - **Database-Side Aggregation**: one grouped SQL query per window (day x skill) plus SQL aggregates for the longest session; the full study history is never loaded into Node.js.
 
+### 11. AI Recommendations (Decision Support)
+
+- **Advice, Not Decisions**: `POST /api/v1/recommendations/generate` returns one to four grounded recommendations, each with the facts it was built from, a confidence band and an explicit status. Nothing is applied automatically.
+- **Six Recommendation Types**: skill focus, session duration, skill balance, exam preparation, consistency, and long-term plan adjustment.
+- **Practice Is Not Ability**: a gap in recent practice is described as exactly that. A recorded CEFR level or exam result is quoted as recorded, and the two are never merged into a verdict. The rule is structural — there is no signal kind for "weak ability" — not a prompt instruction.
+- **Honest Confidence**: bands come from how much evidence exists (never above `LOW` under four sessions), never from a model's self-report, and every payload says in words that the band is not a probability.
+- **Remembers Your Answers**: accepted, rejected, modified, postponed and ignored are stored per recommendation. A recommendation rejected twice with unchanged evidence is suppressed rather than rephrased; changed evidence lets it return.
+- **Objective-Aware**: switching the active objective from IELTS to TOEFL retires the previous batch and re-scopes exam advice to the new test.
+- **Provider-Agnostic**: the model sits behind an adapter (`LLM_PROVIDER=none` is the default, and a supported one). Malformed JSON, schema mismatches, ability diagnoses and outages all fall back to the deterministic engine instead of failing the request.
+- **Explicit Apply**: accepting a recommendation only records a decision. Turning it into a goal takes a second call with `confirm: true`, and only a goal is ever created — never a session, a milestone or a plan edit. No recommendation UI ships with this phase.
+
 ---
 
 ## System Architecture
@@ -197,6 +208,8 @@ The web application leverages Next.js 14 App Router:
 - **`LevelAssessment`**: One recorded CEFR assessment per row, with an independent nullable level for `cefrLevel` (overall), `listeningLevel`, `readingLevel`, `writingLevel` and `speakingLevel` — `null` means "not assessed". Levels are recorded by the learner and never inferred from study time.
 - **`Exam`**: A planned or taken exam (`type`, `title`, `scheduledAt`, `status`, `targetScore`, `targetDate`, `scoreScale`). `scoreScale` is an opaque JSON scoring-scale descriptor, so a new scoring scheme never needs a schema change.
 - **`ExamResult`**: A recorded result (`takenAt`, `isMock`, optional `overallScore`, flexible `skillScores` JSON), validated against the exam's own scale.
+- **`Recommendation`**: one stored recommendation (`type`, `title`, `recommendation`, `rationale`, `supportingData`, `confidence`, `estimatedDurationMinutes`, `relatedSkillId` / `relatedGoalId` / `relatedPlanId`, `objectiveId`, `evidenceKey`, `status`, `source`, `suggestedAction`). The related ids are plain columns rather than foreign keys on purpose: a recommendation is a historical statement, and a later cascade must not quietly rewrite what it said.
+- **`RecommendationFeedback`**: one appended row per decision (`recommendationId`, `userId`, `action`, `reason`, `createdAt`). The current status lives on the recommendation; the trail lives here, so "rejected, then accepted two days later" stays visible.
 - **`LongTermPlan`**: High-level learning plan (`title`, `startDate`, `endDate`, `targetMinutes`, `status`, `objectiveId`, `examId`).
 - **`PlanMilestone`**: Time-bounded phase within a plan (`ordering`, `startDate`, `endDate`, `targetMinutes`, `status`).
 - **`StudySession`**: Atomic study record (`startedAt`, `endedAt`, `durationMinutes`, `skillId`, `categoryId`, `planId`, `milestoneId`). **Sole source of truth for study time.**
@@ -234,6 +247,7 @@ lingoPath/
 │   │   │   │   ├── health/      # Health check probes
 │   │   │   │   ├── objectives/  # Multiple objectives, the active one & its factual signals
 │   │   │   │   ├── plans/       # Long-term plans & milestone services
+│   │   │   │   ├── recommendations/ # AI recommendations: context, analysis, LLM adapter & feedback
 │   │   │   │   ├── sessions/    # Study session recording & timer stats
 │   │   │   │   └── skills/      # Skill taxonomy
 │   │   │   ├── plugins/         # Fastify plugins (Prisma, CORS, Helmet, errors)
@@ -324,6 +338,10 @@ Set up the required environment files across the project:
   PORT=3001
   HOST=0.0.0.0
   CORS_ORIGIN="http://localhost:3000"
+  # Optional: without it the built-in rule engine writes the recommendations
+  LLM_PROVIDER="none"
+  LLM_BASE_URL="https://api.openai.com/v1"
+  LLM_MODEL="gpt-4o-mini"
   ```
 - **Web environment (`apps/web/.env.local`)**:
   ```bash
@@ -499,6 +517,18 @@ These endpoints also accept the optional query overrides `?timezone=`, `?intensi
 
 The payload contains `summary`, `skills`, `trends`, `comparison`, `plans` and `goals`. Streaks come from the calendar module, goal progress from the goals module and plan progress from the plans module, so analytics never redefines an existing rule.
 
+### AI Recommendations (`/api/v1/recommendations`)
+
+| Method | Endpoint                              | Description                                                                                   |
+| ------ | ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `POST` | `/api/v1/recommendations/generate`    | Run the pipeline and store a fresh batch, retiring the previous open one                      |
+| `GET`  | `/api/v1/recommendations`             | List stored recommendations (`?status=`, `?type=`, `?limit=`)                                 |
+| `GET`  | `/api/v1/recommendations/:id`         | Get one recommendation                                                                        |
+| `POST` | `/api/v1/recommendations/:id/feedback` | Record `ACCEPTED` / `REJECTED` / `MODIFIED` / `POSTPONED` / `IGNORED`, with an optional `reason` |
+| `POST` | `/api/v1/recommendations/:id/apply`   | Create a goal from an accepted recommendation — requires `{"confirm": true}`                  |
+
+Each item carries `title`, `recommendation`, `rationale`, `supportingData` (label / value / source), `confidence`, `confidenceBasis`, `estimatedDurationMinutes`, `relatedSkillId`, `relatedGoalId`, `relatedPlanId`, `generatedAt`, `status`, `source` and an optional `suggestedAction`. Generation `meta` reports `source` (`LLM` or `RULE_BASED`), the LLM status, the confidence ceiling and the data-quality notes. Accepting returns `meta.followUp` — the "add this to your plan?" question — because accepting and applying are two decisions, not one.
+
 ## Architecture Principles
 
 1. **`StudySession` as Single Source of Truth**: All progress metrics, streaks, completed hours, and milestone achievements are computed directly from real session logs. Progress totals are never stored as static editable numbers.
@@ -539,3 +569,5 @@ The payload contains `summary`, `skills`, `trends`, `comparison`, `plans` and `g
 9. **Levels Are Recorded, Never Inferred — and Nothing Is Graded**: a CEFR level exists only because the learner recorded an assessment. `apps/api/src/modules/assessments/level.domain.ts` cannot read `StudySession` at all; the overview is empty until an assessment exists; and no code path converts hours studied into a level, a predicted score or a readiness verdict. Where a comparison is shown (a target band against a recorded result, a level against the previous recording), it is arithmetic on values the learner entered, and the observation carries the fact it came from. The signal module (`apps/api/src/modules/objectives/objective.signals.ts`) has no database dependency, and both it and the level domain are covered by guard tests that fail on readiness vocabulary.
 
 10. **Scales Are Data, Not Columns**: an exam's scoring scale is an opaque descriptor (`{ key, label, min, max, step, sections }`) stored in `exams.score_scale` and resolved by a preset registry (`apps/api/src/modules/exams/exam.scoring.ts`). Scores are validated against their own exam's scale, so an IELTS band out of 9 and a TOEFL total out of 120 coexist without a redesign — and a future scoring change is a new preset or a stored descriptor rather than a migration. The resolved scale is sent to the client (including how many decimals to render and what to call the target), so the UI never restates a scoring rule.
+
+11. **Recommendations Are Grounded, Not Improvised**: the model never sees the database, never sees a session, a note, a display name or a timezone, and never authors the evidence. It receives a redacted context built by `recommendation.aggregation.ts`, may only rewrite candidates the deterministic engine produced, and its output is validated twice: by Zod against an exact schema, and by a reasoning guard that rejects ability diagnoses, score predictions and readiness verdicts. `supportingData` is always the engine's own. Every failure path — no provider, timeout, invalid JSON, schema mismatch, rejected prose — returns the rule-based wording, so the endpoint cannot fail because a model misbehaved. `HIGH` additionally requires at least 20 sessions across 10 active days plus a recorded assessment or exam result, and the band is described as coarse in every payload, because a sufficiency rule is not a probability.

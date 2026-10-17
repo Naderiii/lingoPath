@@ -62,6 +62,52 @@ enum ExamStatus {
   CANCELLED
 }
 
+// ─── AI Recommendation Engine (Phase 10) ─────────────────────────────────────
+
+enum RecommendationType {
+  SKILL
+  DURATION
+  BALANCE
+  EXAM_PREPARATION
+  CONSISTENCY
+  PLAN_ADJUSTMENT
+}
+
+enum RecommendationConfidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// The user's decision about one recommendation. `SUPERSEDED` and `EXPIRED` are
+// not decisions — they record that a recommendation was replaced by a newer
+// generation or aged out before the learner answered it.
+enum RecommendationStatus {
+  NEW
+  ACCEPTED
+  REJECTED
+  MODIFIED
+  POSTPONED
+  IGNORED
+  SUPERSEDED
+  EXPIRED
+}
+
+enum RecommendationAction {
+  ACCEPTED
+  REJECTED
+  MODIFIED
+  POSTPONED
+  IGNORED
+}
+
+// Where the wording came from: the LLM adapter, or the deterministic engine that
+// keeps the feature working when no provider is configured or reachable.
+enum RecommendationSource {
+  LLM
+  RULE_BASED
+}
+
 // ─── Identity ────────────────────────────────────────────────────────────────
 
 model User {
@@ -87,9 +133,13 @@ model User {
   // "exactly one active objective" is a database guarantee instead of a rule
   // every writer has to remember. `SetNull` means deleting the focused objective
   // leaves the user with no focus rather than a dangling reference.
-  objectives        LearningObjective[] @relation("UserObjectives")
-  activeObjectiveId String?             @unique
-  activeObjective   LearningObjective?  @relation("ActiveObjective", fields: [activeObjectiveId], references: [id], onDelete: SetNull)
+  objectives LearningObjective[] @relation("UserObjectives")
+
+  // Phase 10 — generated recommendations and the decisions taken on them.
+  recommendations        Recommendation[]
+  recommendationFeedback RecommendationFeedback[]
+  activeObjectiveId      String?                  @unique
+  activeObjective        LearningObjective?       @relation("ActiveObjective", fields: [activeObjectiveId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
@@ -213,7 +263,7 @@ model LearningObjective {
 // ─── Long-Term Plans ─────────────────────────────────────────────────────────
 
 model LongTermPlan {
-  id            String    @id @default(uuid())
+  id            String     @id @default(uuid())
   userId        String
   title         String
   description   String?
@@ -255,8 +305,8 @@ model PlanMilestone {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  plan  LongTermPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
-  skill Skill?         @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  plan     LongTermPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  skill    Skill?         @relation(fields: [skillId], references: [id], onDelete: SetNull)
   sessions StudySession[]
 
   @@index([planId, ordering])
@@ -357,10 +407,10 @@ model Exam {
   // Stored as JSON on purpose: a scoring change (a new TOEFL format, a revised
   // band scale, a provider-specific mock scale) is a data or preset change, not a
   // schema migration. Null means "use the default scale for `type`".
-  scoreScale Json?
-  notes      String?
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  scoreScale  Json?
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   objective LearningObjective? @relation(fields: [objectiveId], references: [id], onDelete: SetNull)
@@ -393,4 +443,83 @@ model ExamResult {
 
   @@index([examId, takenAt])
   @@map("exam_results")
+}
+
+// ─── Recommendations (Phase 10) ──────────────────────────────────────────────
+//
+// A recommendation is a *stored decision-support artefact*, not a decision. The
+// row records what the engine said, the evidence it said it from, the confidence
+// band and which objective was in focus at the time — so the recommendation can
+// still be explained months later, after the underlying sessions have changed.
+//
+// `relatedSkillId` / `relatedGoalId` / `relatedPlanId` are plain ids with no
+// foreign key on purpose. A recommendation is a historical statement ("you had
+// not practised writing for 12 days as of 3 March"); cascading deletes or
+// `SetNull` would silently rewrite that statement when the learner later deletes
+// the goal it was about.
+
+model Recommendation {
+  id                       String                   @id @default(uuid())
+  userId                   String
+  type                     RecommendationType
+  title                    String
+  recommendation           String
+  rationale                String
+  supportingData           Json // Array<{ label, value, source }> — the facts the wording is built from
+  confidence               RecommendationConfidence
+  estimatedDurationMinutes Int?
+  relatedSkillId           String?
+  relatedGoalId            String?
+  relatedPlanId            String?
+  // The objective in focus when this was generated. A later objective change is
+  // what makes an older recommendation stale rather than still relevant.
+  objectiveId              String?
+  objectiveType            ObjectiveType?
+  source                   RecommendationSource
+  // Coarse fingerprint of the evidence. Two generations with the same key rest on
+  // the same facts, which is exactly what makes "you rejected this already" and
+  // "the evidence changed" answerable without replaying the whole analysis.
+  evidenceKey              String
+  // The concrete planning change the learner may confirm. Null when the
+  // recommendation is advice with no safe automatic expression (a plan
+  // reshuffle, for example) — the engine never invents an action.
+  suggestedAction          Json?
+  status                   RecommendationStatus     @default(NEW)
+  generatedAt              DateTime                 @default(now())
+  expiresAt                DateTime?
+  decidedAt                DateTime?
+  // Set only when the learner explicitly confirmed writing this into planning
+  // data. Accepting a recommendation records a decision; applying it is a
+  // separate, deliberate act.
+  appliedAt                DateTime?
+  appliedGoalId            String?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+
+  user     User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedback RecommendationFeedback[]
+
+  @@index([userId, status, generatedAt])
+  @@index([userId, evidenceKey])
+  @@index([userId, objectiveId])
+  @@map("recommendations")
+}
+
+// One row per user decision, appended. The recommendation row keeps the current
+// status; this table keeps the trail, so "rejected, then accepted two days later"
+// is visible instead of being overwritten.
+model RecommendationFeedback {
+  id               String               @id @default(uuid())
+  recommendationId String
+  userId           String
+  action           RecommendationAction
+  reason           String?
+  createdAt        DateTime             @default(now())
+
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([recommendationId, createdAt])
+  @@index([userId, createdAt])
+  @@map("recommendation_feedback")
 }

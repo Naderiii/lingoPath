@@ -492,7 +492,8 @@ export type ListLevelAssessmentsQuery = z.infer<typeof ListLevelAssessmentsQuery
  * came from. `previous*` is the recording before it, so the UI can show a change
  * without inventing a baseline.
  */
-export interface LevelDimensionSnapshot {  dimension: LevelDimension
+export interface LevelDimensionSnapshot {
+  dimension: LevelDimension
   assessmentId: string
   level: CefrLevel
   /** `A1 → 1 … C2 → 6`. The only ordering rule for CEFR levels. */
@@ -896,13 +897,7 @@ export interface UpdateCalendarSettingsInput {
 // for the request lives in `apps/api/src/modules/analytics/analytics.schemas.ts`
 // so API tests never depend on this package's build output.
 
-export type AnalyticsRangeKind =
-  | '7d'
-  | '30d'
-  | '90d'
-  | 'current-year'
-  | 'previous-year'
-  | 'custom'
+export type AnalyticsRangeKind = '7d' | '30d' | '90d' | 'current-year' | 'previous-year' | 'custom'
 
 export type AnalyticsTrendGranularity = 'day' | 'week' | 'month'
 
@@ -1049,3 +1044,179 @@ export interface AnalyticsPayload {
 export interface HealthResponse {
   status: 'ok'
 }
+
+// ─── AI Recommendations (Phase 10) ───────────────────────────────────────────
+//
+// The recommendation engine is decision support: it states what it observed, on
+// what evidence, with a coarse confidence band — and then waits. Nothing in this
+// contract lets a recommendation apply itself to planning data; `apply` is a
+// separate, explicitly confirmed call.
+
+export const RecommendationTypeEnum = z.enum([
+  'SKILL',
+  'DURATION',
+  'BALANCE',
+  'EXAM_PREPARATION',
+  'CONSISTENCY',
+  'PLAN_ADJUSTMENT',
+])
+export type RecommendationType = z.infer<typeof RecommendationTypeEnum>
+
+export const RecommendationConfidenceEnum = z.enum(['LOW', 'MEDIUM', 'HIGH'])
+export type RecommendationConfidence = z.infer<typeof RecommendationConfidenceEnum>
+
+export const RecommendationStatusEnum = z.enum([
+  'NEW',
+  'ACCEPTED',
+  'REJECTED',
+  'MODIFIED',
+  'POSTPONED',
+  'IGNORED',
+  'SUPERSEDED',
+  'EXPIRED',
+])
+export type RecommendationStatus = z.infer<typeof RecommendationStatusEnum>
+
+export const RecommendationActionEnum = z.enum([
+  'ACCEPTED',
+  'REJECTED',
+  'MODIFIED',
+  'POSTPONED',
+  'IGNORED',
+])
+export type RecommendationAction = z.infer<typeof RecommendationActionEnum>
+
+export const RecommendationSourceEnum = z.enum(['LLM', 'RULE_BASED'])
+export type RecommendationSource = z.infer<typeof RecommendationSourceEnum>
+
+/** Where one supporting fact came from, so the UI can label it honestly. */
+export const RecommendationEvidenceSourceEnum = z.enum([
+  'STUDY_SESSIONS',
+  'RECORDED_ASSESSMENT',
+  'RECORDED_EXAM_RESULT',
+  'GOALS',
+  'PLANS',
+  'OBJECTIVE',
+  'CALENDAR',
+])
+export type RecommendationEvidenceSource = z.infer<typeof RecommendationEvidenceSourceEnum>
+
+export const RecommendationDataPointSchema = z.object({
+  label: z.string(),
+  value: z.string(),
+  source: RecommendationEvidenceSourceEnum,
+})
+export type RecommendationDataPoint = z.infer<typeof RecommendationDataPointSchema>
+
+/**
+ * The only planning change the engine can ever propose. It is a *proposal*: the
+ * learner has to call `apply` with an explicit confirmation before a goal is
+ * written, and nothing here ever creates sessions or edits existing plans.
+ */
+export const SuggestedGoalActionSchema = z.object({
+  kind: z.literal('CREATE_GOAL'),
+  period: GoalPeriodEnum,
+  targetMinutes: z.number().int().min(1),
+  // Opaque references rather than foreign keys: the action is a proposal, and
+  // the ids it names may be retired before the learner confirms it.
+  skillId: z.string().min(1).nullable(),
+  relatedGoalId: z.string().min(1).nullable(),
+})
+export type SuggestedGoalAction = z.infer<typeof SuggestedGoalActionSchema>
+
+export interface Recommendation {
+  id: string
+  type: RecommendationType
+  title: string
+  recommendation: string
+  rationale: string
+  supportingData: RecommendationDataPoint[]
+  confidence: RecommendationConfidence
+  /** Short, literal explanation of what the band rests on — never a probability. */
+  confidenceBasis: string
+  estimatedDurationMinutes: number | null
+  relatedSkillId: string | null
+  relatedSkillName: string | null
+  relatedGoalId: string | null
+  relatedPlanId: string | null
+  generatedAt: string
+  status: RecommendationStatus
+  source: RecommendationSource
+  decidedAt: string | null
+  appliedAt: string | null
+  appliedGoalId: string | null
+  expiresAt: string | null
+  suggestedAction: SuggestedGoalAction | null
+}
+
+/** Coarse state of the evidence behind a generation, surfaced to the client. */
+export interface RecommendationDataQuality {
+  level: RecommendationConfidence
+  sessionCount: number
+  activeDays: number
+  assessmentRecorded: boolean
+  examResultRecorded: boolean
+  notes: string[]
+}
+
+export interface RecommendationLlmStatus {
+  attempted: boolean
+  available: boolean
+  /** Why the model was not used, in plain language; `null` when it was. */
+  reason: string | null
+}
+
+/** Everything that describes one generation run, independent of its items. */
+export interface RecommendationGeneration {
+  generatedAt: string
+  objectiveId: string | null
+  objectiveType: ObjectiveType | null
+  source: RecommendationSource
+  llm: RecommendationLlmStatus
+  confidenceCeiling: RecommendationConfidence
+  dataQuality: RecommendationDataQuality
+  considered: number
+  suppressed: number
+  rejectedByValidation: number
+  notes: string[]
+}
+
+/**
+ * Asked after a recommendation is accepted: adding it to the plan is a second,
+ * separate decision. `canApply` is false for types that have no safe automatic
+ * expression (a plan reshuffle is advice, not a write).
+ */
+export interface RecommendationFollowUp {
+  question: string
+  canApply: boolean
+  action: SuggestedGoalAction | null
+}
+
+export const GenerateRecommendationsSchema = z.object({
+  /** `false` returns the current unexpired batch instead of generating again. */
+  refresh: z.boolean().default(true),
+})
+export type GenerateRecommendations = z.infer<typeof GenerateRecommendationsSchema>
+
+export const ListRecommendationsQuerySchema = z.object({
+  status: RecommendationStatusEnum.optional(),
+  type: RecommendationTypeEnum.optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+export type ListRecommendationsQuery = z.infer<typeof ListRecommendationsQuerySchema>
+
+export const RecommendationFeedbackSchema = z.object({
+  action: RecommendationActionEnum,
+  reason: z.string().trim().max(500).optional(),
+})
+export type RecommendationFeedback = z.infer<typeof RecommendationFeedbackSchema>
+
+export const ApplyRecommendationSchema = z.object({
+  /** Explicit confirmation. Without it the call is rejected — no silent writes. */
+  confirm: z.literal(true),
+  period: GoalPeriodEnum.optional(),
+  targetMinutes: z.number().int().min(1).max(10080).optional(),
+  skillId: z.string().uuid().nullable().optional(),
+  startDate: z.string().datetime().optional(),
+})
+export type ApplyRecommendation = z.infer<typeof ApplyRecommendationSchema>
