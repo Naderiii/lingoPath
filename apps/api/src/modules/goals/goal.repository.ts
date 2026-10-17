@@ -66,6 +66,7 @@ export function createGoalRepository(prisma: PrismaClient) {
         isActive: data.isActive,
         planId: data.planId ?? null,
         objectiveId: data.objectiveId ?? null,
+        topic: data.topic ?? null,
       }
 
       if (data.skillTargets && data.skillTargets.length > 0) {
@@ -103,6 +104,7 @@ export function createGoalRepository(prisma: PrismaClient) {
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
           ...(data.planId !== undefined ? { planId: data.planId ?? null } : {}),
           ...(data.objectiveId !== undefined ? { objectiveId: data.objectiveId ?? null } : {}),
+          ...(data.topic !== undefined ? { topic: data.topic ?? null } : {}),
         }
 
         if (data.skillTargets && data.skillTargets.length > 0) {

@@ -15,6 +15,7 @@ import {
   Settings,
   GraduationCap,
   ClipboardList,
+  Lightbulb,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -69,6 +70,12 @@ const navItems: NavItem[] = [
     group: 'Plan',
   },
   {
+    label: 'Suggestions',
+    href: '/recommendations',
+    icon: Lightbulb,
+    group: 'Plan',
+  },
+  {
     label: 'Analytics',
     href: '/analytics',
     icon: BarChart3,
@@ -120,7 +127,9 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
             {group}
           </p>
           {items.map((item) => {
-            const isActive = pathname === item.href
+            const isActive =
+              pathname === item.href ||
+              (item.href === '/recommendations' && pathname.startsWith('/recommendations/'))
             const Icon = item.icon
             return (
               <Link

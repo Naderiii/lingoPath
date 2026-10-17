@@ -326,6 +326,11 @@ model Goal {
   isActive      Boolean    @default(true)
   planId        String?
   objectiveId   String?
+  // Optional free-text focus for a plan item ("IELTS Task 2", "Conditionals").
+  // Mirrors `StudySession.topic`: a learner who confirms a suggestion adds one
+  // concrete thing to work on for that day, and the same label can later be
+  // attached to the session that records it. Null for plain recurring targets.
+  topic         String?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 

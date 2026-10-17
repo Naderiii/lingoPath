@@ -45,6 +45,9 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
           {goal.plan && (
             <p className="text-muted-foreground mt-0.5 text-xs">Plan: {goal.plan.title}</p>
           )}
+          {goal.topic && (
+            <p className="text-muted-foreground mt-0.5 text-xs">Focus: {goal.topic}</p>
+          )}
         </div>
         <span
           className={cn(

@@ -27,6 +27,8 @@ export interface Goal {
   isActive: boolean
   planId: string | null
   objectiveId: string | null
+  /** Optional focus label for a plan item; set when a confirmed suggestion becomes one. */
+  topic?: string | null
   createdAt: string
   updatedAt: string
   skillTargets?: GoalSkillTarget[]

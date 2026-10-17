@@ -96,6 +96,9 @@ export function GoalDetailDialog({ goal, open, onOpenChange }: GoalDetailDialogP
                   {endDate &&
                     ` – ${endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`}
                 </p>
+                {goal.topic && (
+                  <p className="text-muted-foreground mt-2 text-sm">Focus: {goal.topic}</p>
+                )}
               </div>
 
               {/* Progress Overview */}

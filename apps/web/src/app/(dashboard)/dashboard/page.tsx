@@ -11,6 +11,7 @@ import { RecentActivityCard } from '@/components/dashboard/recent-activity-card'
 import { DashboardLoading } from '@/components/dashboard/dashboard-loading'
 import { DashboardError } from '@/components/dashboard/dashboard-error'
 import { DashboardEmpty } from '@/components/dashboard/dashboard-empty'
+import { SuggestedForYou } from '@/components/recommendations/suggested-for-you'
 
 export default function DashboardPage() {
   const { data, isLoading, error, refetch } = useDashboard()
@@ -79,6 +80,9 @@ export default function DashboardPage() {
 
       {/* Active Goals */}
       {data.activeGoals.length > 0 && <GoalsCard goals={data.activeGoals} />}
+
+      {/* Suggestions — after the learner's own numbers, never instead of them */}
+      <SuggestedForYou />
 
       {/* Week and Skills */}
       <div className="grid gap-6 md:grid-cols-2">

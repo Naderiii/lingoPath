@@ -26,6 +26,7 @@ import type {
   RecommendationDataPoint,
   RecommendationFollowUp,
   RecommendationGeneration,
+  RecommendationHistoryEntry,
   RecommendationStatus,
   SuggestedGoalAction,
 } from '@lingopath/types'
@@ -216,6 +217,7 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
       query: {
         status?: RecommendationStatus | undefined
         type?: Recommendation['type'] | undefined
+        actionable?: boolean | undefined
         limit: number
       },
     ): Promise<{ data: Recommendation[]; meta: RecommendationListMeta }> {
@@ -227,6 +229,7 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
         limit: query.limit,
         ...(query.status !== undefined ? { status: query.status } : {}),
         ...(query.type !== undefined ? { type: query.type } : {}),
+        ...(query.actionable === true ? { actionable: true } : {}),
       })
 
       return {
@@ -241,6 +244,58 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
       const [dto] = await withSkillNames([row])
       if (dto === undefined) throw new NotFoundError('Recommendation', id)
       return dto
+    },
+
+    /**
+     * The decision trail behind the current batch.
+     *
+     * Each entry is a decision that was actually taken, with the wording that was
+     * on screen at the time. It deliberately includes decisions on recommendations
+     * that have since been superseded or have expired: the learner still made
+     * them, and the page exists to show what was done with the advice.
+     */
+    async history(
+      userId: string,
+      query: { action?: RecommendationAction | undefined; limit: number },
+    ): Promise<{ data: RecommendationHistoryEntry[]; meta: { count: number; limit: number } }> {
+      const rows = await deps.repository.listDecisionHistory(userId, {
+        limit: query.limit,
+        ...(query.action !== undefined ? { action: query.action } : {}),
+      })
+
+      const skillIds = [
+        ...new Set(
+          rows.flatMap((row) =>
+            row.recommendation.relatedSkillId ? [row.recommendation.relatedSkillId] : [],
+          ),
+        ),
+      ]
+      const names = await deps.repository.getSkillNames(skillIds)
+      const byId = new Map(names.map((entry) => [entry.id, entry.name]))
+
+      return {
+        data: rows.map((row) => ({
+          id: row.id,
+          recommendationId: row.recommendation.id,
+          action: row.action,
+          reason: row.reason,
+          decidedAt: row.createdAt.toISOString(),
+          title: row.recommendation.title,
+          recommendation: row.recommendation.recommendation,
+          rationale: row.recommendation.rationale,
+          type: row.recommendation.type,
+          confidence: row.recommendation.confidence,
+          relatedSkillId: row.recommendation.relatedSkillId,
+          relatedSkillName:
+            row.recommendation.relatedSkillId === null
+              ? null
+              : (byId.get(row.recommendation.relatedSkillId) ?? null),
+          status: row.recommendation.status,
+          appliedAt: row.recommendation.appliedAt?.toISOString() ?? null,
+          appliedGoalId: row.recommendation.appliedGoalId,
+        })),
+        meta: { count: rows.length, limit: query.limit },
+      }
     },
 
     /**
@@ -333,6 +388,12 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
       const period = input.period ?? proposal?.period ?? 'WEEKLY'
       const targetMinutes = input.targetMinutes ?? proposal?.targetMinutes ?? null
       const skillId = input.skillId !== undefined ? input.skillId : (proposal?.skillId ?? null)
+      // The engine never proposes a topic, so an omitted or blank topic means
+      // "none". Anything else is the learner's own label for this item.
+      const topic =
+        input.topic !== undefined && input.topic !== null && input.topic.length > 0
+          ? input.topic
+          : null
 
       if (targetMinutes === null) {
         throw new ValidationError(
@@ -340,12 +401,22 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
         )
       }
 
+      if (
+        input.startDate !== undefined &&
+        input.endDate !== undefined &&
+        new Date(input.endDate).getTime() <= new Date(input.startDate).getTime()
+      ) {
+        throw new ValidationError('`endDate` must be after `startDate`.')
+      }
+
       const goal = await deps.repository.goalRepository.create(userId, {
         period,
         targetMinutes,
         startDate: input.startDate ?? now().toISOString(),
+        ...(input.endDate !== undefined ? { endDate: input.endDate } : {}),
         isActive: true,
         ...(row.objectiveId !== null ? { objectiveId: row.objectiveId } : {}),
+        ...(topic !== null ? { topic } : {}),
         ...(skillId !== null ? { skillTargets: [{ skillId, targetMinutes }] } : {}),
       })
 
