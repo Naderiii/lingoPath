@@ -1,4 +1,5 @@
-import type { PrismaClient, Prisma } from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import type { ListExamsQuery, CreateExam, UpdateExam, CreateExamResult } from '@lingopath/types'
 import { keysetOrderBy, keysetWhere } from '../../shared/keyset-pagination.js'
 
@@ -63,6 +64,13 @@ export function createExamRepository(prisma: PrismaClient) {
           scheduledAt: data.scheduledAt ? new Date(data.scheduledAt) : null,
           venue: data.venue ?? null,
           status: data.status,
+          targetScore: data.targetScore ?? null,
+          targetDate: data.targetDate ? new Date(data.targetDate) : null,
+          // Omitted when absent: for a nullable Json column Prisma distinguishes
+          // "not provided" from `JsonNull`, and a brand-new exam has no descriptor.
+          ...(data.scoreScale !== undefined
+            ? { scoreScale: data.scoreScale as unknown as Prisma.InputJsonValue }
+            : {}),
           notes: data.notes ?? null,
         },
         include: {
@@ -84,6 +92,20 @@ export function createExamRepository(prisma: PrismaClient) {
             : {}),
           ...(data.venue !== undefined ? { venue: data.venue ?? null } : {}),
           ...(data.status ? { status: data.status } : {}),
+          ...(data.targetScore !== undefined ? { targetScore: data.targetScore ?? null } : {}),
+          ...(data.targetDate !== undefined
+            ? { targetDate: data.targetDate ? new Date(data.targetDate) : null }
+            : {}),
+          // Clearing a Json column needs `DbNull`; plain `null` is rejected by
+          // Prisma precisely so "set JSON null" and "remove the value" stay distinct.
+          ...(data.scoreScale !== undefined
+            ? {
+                scoreScale:
+                  data.scoreScale === null
+                    ? Prisma.DbNull
+                    : (data.scoreScale as unknown as Prisma.InputJsonValue),
+              }
+            : {}),
           ...(data.notes !== undefined ? { notes: data.notes ?? null } : {}),
         },
         include: {
@@ -105,8 +127,10 @@ export function createExamRepository(prisma: PrismaClient) {
           examId,
           isMock: data.isMock,
           takenAt: new Date(data.takenAt),
-          overallScore: data.overallScore,
-          skillScores: data.skillScores as unknown as Prisma.InputJsonValue,
+          // A result may carry only section scores; an absent overall is stored as
+          // null instead of being derived, so nothing is invented on the way in.
+          overallScore: data.overallScore ?? null,
+          skillScores: (data.skillScores ?? {}) as Prisma.InputJsonValue,
           notes: data.notes ?? null,
         },
       })

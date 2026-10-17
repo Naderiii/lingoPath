@@ -51,6 +51,67 @@ export function createObjectiveRepository(prisma: PrismaClient) {
         where: { id },
       })
     },
+
+    // ─── Active objective (Phase 9) ────────────────────────────────────────────
+
+    /**
+     * The objective designated by `users.active_objective_id`, scoped to the user.
+     * The relation filter keeps ownership in the same query, so a focus pointing at
+     * another account's objective can never be read.
+     */
+    findActive(userId: string) {
+      return prisma.learningObjective.findFirst({
+        where: { userId, activeForUser: { id: userId } },
+      })
+    },
+
+    /** Total objectives for the user — tells "none selected" apart from "none created". */
+    countByUser(userId: string) {
+      return prisma.learningObjective.count({ where: { userId } })
+    },
+
+    /**
+     * Designates (or clears) the active objective. `updateMany` rather than `update`
+     * so a missing user row reports `count: 0` instead of throwing a driver error the
+     * service cannot classify.
+     */
+    setActive(userId: string, objectiveId: string | null) {
+      return prisma.user.updateMany({
+        where: { id: userId },
+        data: { activeObjectiveId: objectiveId },
+      })
+    },
+
+    countLinkedPlans(objectiveId: string, userId: string) {
+      return prisma.longTermPlan.count({ where: { objectiveId, userId } })
+    },
+
+    countLinkedGoals(objectiveId: string, userId: string) {
+      return prisma.goal.count({ where: { objectiveId, userId } })
+    },
+
+    /** Linked exams, undated ones last so an upcoming exam leads the list. */
+    findLinkedExams(objectiveId: string, userId: string) {
+      return prisma.exam.findMany({
+        where: { objectiveId, userId },
+        orderBy: [{ scheduledAt: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
+      })
+    },
+
+    findLatestResultForExamIds(examIds: string[]) {
+      if (examIds.length === 0) return Promise.resolve(null)
+      return prisma.examResult.findFirst({
+        where: { examId: { in: examIds } },
+        orderBy: [{ takenAt: 'desc' }, { id: 'asc' }],
+      })
+    },
+
+    findLatestAssessment(userId: string) {
+      return prisma.levelAssessment.findFirst({
+        where: { userId },
+        orderBy: [{ assessedAt: 'desc' }, { id: 'asc' }],
+      })
+    },
   }
 }
 

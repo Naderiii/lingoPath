@@ -73,12 +73,23 @@ model User {
 
   sessions         StudySession[]
   categories       Category[]
-  objectives       LearningObjective[]
   plans            LongTermPlan[]
   goals            Goal[]
   levelAssessments LevelAssessment[]
   exams            Exam[]
   calendarSettings CalendarSetting?
+
+  // Phase 9 — the objective the learner is currently working towards.
+  //
+  // Several objectives can exist at once (IELTS, TOEFL, General English,
+  // Immigration, …); this single column says which one planning should default
+  // to. It lives on the user rather than as a flag on the objective so that
+  // "exactly one active objective" is a database guarantee instead of a rule
+  // every writer has to remember. `SetNull` means deleting the focused objective
+  // leaves the user with no focus rather than a dangling reference.
+  objectives        LearningObjective[] @relation("UserObjectives")
+  activeObjectiveId String?             @unique
+  activeObjective   LearningObjective?  @relation("ActiveObjective", fields: [activeObjectiveId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
@@ -186,7 +197,11 @@ model LearningObjective {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation("UserObjectives", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Present when this objective is the user's current focus (`users.active_objective_id`).
+  activeForUser User? @relation("ActiveObjective")
+
   plans LongTermPlan[]
   goals Goal[]
   exams Exam[]
@@ -288,17 +303,33 @@ model GoalSkillTarget {
   @@map("goal_skill_targets")
 }
 
-// ─── Level Assessments (CEFR) ────────────────────────────────────────────────
+// ─── Level Assessments (CEFR, Phase 9) ───────────────────────────────────────
+//
+// One row = one assessment event. Each of the five dimensions carries its own
+// optional CEFR level, because a real assessment rarely covers all of them: a
+// self-assessment may only rate speaking, a formal exam may report all four
+// skills, and a placement test may report a single overall band. Every level is
+// therefore nullable, and null means "not assessed" — never "unknown" and never
+// "estimated".
+//
+// Levels here are *recorded*, never inferred: nothing links an assessment to
+// `StudySession`, and no code path derives a CEFR level from study time.
+// `cefrLevel` is the overall level of the assessment, which is why the four
+// skill columns are the ones carrying a suffix.
 
 model LevelAssessment {
-  id         String           @id @default(uuid())
-  userId     String
-  cefrLevel  CefrLevel
-  assessedAt DateTime
-  method     AssessmentMethod
-  notes      String?
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
+  id             String           @id @default(uuid())
+  userId         String
+  cefrLevel      CefrLevel? // overall level of this assessment
+  listeningLevel CefrLevel?
+  readingLevel   CefrLevel?
+  writingLevel   CefrLevel?
+  speakingLevel  CefrLevel?
+  assessedAt     DateTime
+  method         AssessmentMethod
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -317,9 +348,19 @@ model Exam {
   scheduledAt DateTime?
   venue       String?
   status      ExamStatus @default(PLANNED)
-  notes       String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  // Target the learner set for this exam: an IELTS band, a TOEFL total, … or
+  // whatever the resolved score scale calls it. Null when no target was set.
+  targetScore Float?
+  targetDate  DateTime?
+  // Opaque scoring-scale descriptor (see `apps/api/src/modules/exams/exam.scoring.ts`).
+  //
+  // Stored as JSON on purpose: a scoring change (a new TOEFL format, a revised
+  // band scale, a provider-specific mock scale) is a data or preset change, not a
+  // schema migration. Null means "use the default scale for `type`".
+  scoreScale Json?
+  notes      String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   objective LearningObjective? @relation(fields: [objectiveId], references: [id], onDelete: SetNull)
@@ -337,8 +378,13 @@ model ExamResult {
   examId       String
   isMock       Boolean  @default(false)
   takenAt      DateTime
-  overallScore Float
-  skillScores  Json // Flexible JSON structure, e.g. { listening: 7.5, reading: 8.0, writing: 6.5, speaking: 7.0 }
+  // Recorded as reported. Null when only section scores were recorded, so a
+  // partial result never forces a fabricated total.
+  overallScore Float?
+  // Flexible JSON structure, e.g. { listening: 7.5, reading: 8.0, writing: 6.5, speaking: 7.0 }.
+  // Keys are validated against the exam's resolved score scale, so a TOEFL total
+  // of 120 or an IELTS band of 0.5 is stored and read back without a redesign.
+  skillScores  Json
   notes        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

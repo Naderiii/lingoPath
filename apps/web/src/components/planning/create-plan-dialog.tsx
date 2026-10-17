@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { useCreatePlan, type CreatePlanInput } from '@/lib/hooks/use-plans'
+import { useActiveObjective, useObjectives } from '@/lib/hooks/use-objectives'
 
 interface CreatePlanDialogProps {
   open: boolean
@@ -24,6 +25,7 @@ interface FormValues {
   startDate: string
   endDate: string
   targetHours: number
+  objectiveId: string
 }
 
 /** Local calendar day of a Date (never the UTC day). */
@@ -35,12 +37,16 @@ function localDayKey(value: Date): string {
 
 export function CreatePlanDialog({ open, onOpenChange }: CreatePlanDialogProps) {
   const createPlan = useCreatePlan()
+  const activeQuery = useActiveObjective()
+  const objectivesQuery = useObjectives()
   const [serverError, setServerError] = useState<string | null>(null)
+  const seededForOpen = useRef(false)
 
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<FormValues>({
     defaultValues: {
@@ -49,8 +55,23 @@ export function CreatePlanDialog({ open, onOpenChange }: CreatePlanDialogProps) 
       startDate: localDayKey(new Date()),
       endDate: '',
       targetHours: 100,
+      objectiveId: '',
     },
   })
+
+  // Seed the objective from the active one, once per opening. The context may still
+  // be loading when the dialog appears, so wait for it rather than defaulting to
+  // nothing; a choice the learner makes afterwards is left alone.
+  useEffect(() => {
+    if (!open) {
+      seededForOpen.current = false
+      return
+    }
+    if (seededForOpen.current || activeQuery.isLoading) return
+
+    seededForOpen.current = true
+    setValue('objectiveId', activeQuery.data?.objective?.id ?? '')
+  }, [open, activeQuery.isLoading, activeQuery.data?.objective?.id, setValue])
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
@@ -70,6 +91,7 @@ export function CreatePlanDialog({ open, onOpenChange }: CreatePlanDialogProps) 
       endDate: endDate.toISOString(),
       targetMinutes: Math.round(values.targetHours * 60),
       status: 'ACTIVE',
+      ...(values.objectiveId ? { objectiveId: values.objectiveId } : {}),
     }
 
     try {
@@ -130,6 +152,33 @@ export function CreatePlanDialog({ open, onOpenChange }: CreatePlanDialogProps) 
               <p className="text-destructive mt-1 text-xs">{errors.description.message}</p>
             )}
           </div>
+
+          {/* Objective — defaults to the active one */}
+          {objectivesQuery.data && objectivesQuery.data.data.length > 0 && (
+            <div>
+              <label htmlFor="objectiveId" className="text-sm font-medium">
+                Objective (optional)
+              </label>
+              <select
+                id="objectiveId"
+                {...register('objectiveId')}
+                className="border-input bg-background ring-offset-background focus-visible:ring-ring mt-1 flex h-10 w-full rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+              >
+                <option value="">No objective linked</option>
+                {objectivesQuery.data.data
+                  .filter((objective) => objective.isActive)
+                  .map((objective) => (
+                    <option key={objective.id} value={objective.id}>
+                      {objective.title}
+                      {objective.id === activeQuery.data?.objective?.id ? ' (active)' : ''}
+                    </option>
+                  ))}
+              </select>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Study time booked against this plan is attributed to the objective you link here.
+              </p>
+            </div>
+          )}
 
           {/* Date Range */}
           <div className="grid grid-cols-2 gap-3">
