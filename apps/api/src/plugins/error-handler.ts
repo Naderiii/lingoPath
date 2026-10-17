@@ -3,10 +3,32 @@ import fp from 'fastify-plugin'
 import { ZodError } from 'zod'
 import { AppError } from '../shared/errors.js'
 
+/**
+ * Zod identity is not guaranteed across package boundaries.
+ *
+ * Validation schemas live in `@lingopath/types`, which has its own resolved copy
+ * of `zod`. Under bundlers and test runners those imports can resolve to different
+ * builds of the same version, and `instanceof ZodError` then returns false for a
+ * perfectly valid `ZodError` — turning a 422 into a 500. Recognising the shape as
+ * well as the class keeps validation errors reported as validation errors however
+ * the dependency graph is flattened.
+ */
+function isZodError(error: unknown): error is ZodError {
+  if (error instanceof ZodError) return true
+  if (typeof error !== 'object' || error === null) return false
+
+  const candidate = error as { name?: unknown; issues?: unknown; flatten?: unknown }
+  return (
+    candidate.name === 'ZodError' &&
+    Array.isArray(candidate.issues) &&
+    typeof candidate.flatten === 'function'
+  )
+}
+
 async function errorHandlerPlugin(app: FastifyInstance) {
   app.setErrorHandler((error, request, reply) => {
     // Zod validation errors (from schema parsing in routes)
-    if (error instanceof ZodError) {
+    if (isZodError(error)) {
       return reply.status(422).send({
         error: {
           code: 'VALIDATION_ERROR',

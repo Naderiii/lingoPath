@@ -16,8 +16,22 @@ import examRoutes from './modules/exams/exam.routes.js'
 import dashboardRoutes from './modules/dashboard/dashboard.routes.js'
 import calendarRoutes from './modules/calendar/calendar.routes.js'
 import analyticsRoutes from './modules/analytics/analytics.routes.js'
+import recommendationRoutes from './modules/recommendations/recommendation.routes.js'
+import {
+  createLlmAdapterFromEnvironment,
+  type LlmAdapter,
+} from './modules/recommendations/recommendation.llm.js'
 
-export async function buildApp() {
+export interface BuildAppOptions {
+  /**
+   * Overrides the configured language model adapter (tests inject a stub; the
+   * default is built from `LLM_*` configuration). Recommendation generation works
+   * either way — without a provider it falls back to deterministic wording.
+   */
+  recommendationLlm?: LlmAdapter
+}
+
+export async function buildApp(options: BuildAppOptions = {}) {
   const loggerConfig =
     config.NODE_ENV === 'development'
       ? {
@@ -58,6 +72,10 @@ export async function buildApp() {
   await app.register(errorHandlerPlugin)
   await app.register(prismaPlugin)
 
+  // The provider is chosen once, here. Modules below never see configuration and
+  // never see a vendor's request shape.
+  const recommendationLlm = options.recommendationLlm ?? createLlmAdapterFromEnvironment(config)
+
   // ─── Routes ─────────────────────────────────────────────────────────────────
   // Health check (outside versioned prefix for load-balancer compatibility)
   await app.register(healthRoutes)
@@ -76,6 +94,10 @@ export async function buildApp() {
       await v1.register(dashboardRoutes, { prefix: '/dashboard' })
       await v1.register(calendarRoutes)
       await v1.register(analyticsRoutes)
+      await v1.register(recommendationRoutes, {
+        llmAdapter: recommendationLlm,
+        maxCandidates: config.RECOMMENDATION_MAX_ITEMS,
+      })
     },
     { prefix: '/api/v1' },
   )
