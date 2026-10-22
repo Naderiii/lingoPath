@@ -418,6 +418,23 @@ export function createRecommendationRepository(prisma: PrismaClient) {
       })
     },
 
+    /**
+     * The batch the learner can still answer, newest first.
+     *
+     * Used by `generate({ refresh: false })`: a client that only wants to re-read
+     * its current advice must not supersede it and spend a model call doing so.
+     */
+    findOpenBatch(userId: string, now: Date) {
+      return prisma.recommendation.findMany({
+        where: {
+          userId,
+          status: 'NEW',
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        orderBy: [{ generatedAt: 'desc' }, { id: 'desc' }],
+      })
+    },
+
     findMany(userId: string, filter: RecommendationListFilter) {
       return prisma.recommendation.findMany({
         where: {

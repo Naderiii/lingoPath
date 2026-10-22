@@ -59,6 +59,16 @@ interface FakeOptions {
   goals?: Array<Record<string, unknown>>
 }
 
+/**
+ * An instant inside the current UTC day.
+ *
+ * The identity test asserts today's total, so a hard-coded date made the suite
+ * pass only on the day it was written (it failed from 2026-10-17 onward).
+ */
+function todayAtUtcNoon(): string {
+  return `${getDayKey(new Date(), 'UTC')}T12:00:00Z`
+}
+
 /** Minimal in-memory Prisma stand-in that honours the timestamp windows. */
 function fakePrisma(options: FakeOptions = {}) {
   const rows = options.rows ?? []
@@ -130,7 +140,7 @@ function fakePrisma(options: FakeOptions = {}) {
 
 describe('dashboard identity', () => {
   it('queries the seeded default user when no header is sent', async () => {
-    const { prisma, captures } = fakePrisma({ rows: [row('s1', '2026-10-16T10:00:00Z', 30)] })
+    const { prisma, captures } = fakePrisma({ rows: [row('s1', todayAtUtcNoon(), 30)] })
     const app = Fastify({ logger: false })
     await app.register(errorHandlerPlugin)
     app.decorate('prisma', prisma)
@@ -236,12 +246,14 @@ describe('dashboard windows follow the user timezone', () => {
   })
 
   it('buckets yearly totals by the user’s local month', async () => {
-    // 2026-11-01T03:30Z is 2026-10-31 23:30 in New York: October, not November.
-    const { repository } = repositoryWith([row('s1', '2026-11-01T03:30:00Z', 45)], NY)
+    const year = Number(getDayKey(new Date(), NY).slice(0, 4))
+    // 1 Nov 03:30Z is 31 Oct 23:30 in New York: October, not November. Derived
+    // from the current year so the assertion does not stop holding in January.
+    const { repository } = repositoryWith([row('s1', `${year}-11-01T03:30:00Z`, 45)], NY)
 
     const yearly = await repository.getYearlyProgress(DEFAULT_USER_ID, NY)
 
-    expect(yearly).toEqual([{ month: '2026-10', totalMinutes: 45 }])
+    expect(yearly).toEqual([{ month: `${year}-10`, totalMinutes: 45 }])
   })
 
   it('bounds the 30-day skill window at the end of today', async () => {

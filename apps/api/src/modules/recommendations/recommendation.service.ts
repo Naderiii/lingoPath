@@ -32,6 +32,7 @@ import type {
 } from '@lingopath/types'
 import { RecommendationDataPointSchema, SuggestedGoalActionSchema } from '@lingopath/types'
 import { ConflictError, NotFoundError, ValidationError } from '../../shared/errors.js'
+import { analyzeContext } from './recommendation.analysis.js'
 import { generateRecommendations } from './recommendation.engine.js'
 import type { LlmAdapter } from './recommendation.llm.js'
 import type { RecommendationAggregation } from './recommendation.aggregation.js'
@@ -139,12 +140,58 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
      * The previous open batch is retired first: recommendations are statements
      * about the evidence at a point in time, and two live batches would leave the
      * learner answering two versions of the same observation.
+     *
+     * `refresh: false` is the documented "re-read" mode: when a batch is still open
+     * it is returned as-is, with no model call and without superseding anything.
+     * The route previously parsed the flag and discarded it, so every call paid for
+     * a generation and invalidated the learner's in-progress batch.
      */
-    async generate(userId: string): Promise<{
+    async generate(
+      userId: string,
+      options: { refresh?: boolean } = {},
+    ): Promise<{
       data: Recommendation[]
       meta: RecommendationGeneration
     }> {
       const startedAt = now()
+
+      if (options.refresh === false) {
+        const open = await deps.repository.findOpenBatch(userId, startedAt)
+        const newest = open[0]
+        if (newest !== undefined) {
+          // The data-quality block describes the record *now*; the batch itself was
+          // written earlier. The note says so rather than implying a fresh run.
+          const context = await deps.aggregation.buildContext(userId)
+          const analysis = analyzeContext(context)
+          const data = await withSkillNames(open)
+
+          return {
+            data,
+            meta: {
+              generatedAt: newest.generatedAt.toISOString(),
+              objectiveId: newest.objectiveId,
+              objectiveType: newest.objectiveType,
+              source: data.some((item) => item.source === 'LLM') ? 'LLM' : 'RULE_BASED',
+              llm: {
+                attempted: false,
+                available: deps.llm.configured,
+                reason: 'You asked for the current batch, so no new generation was run.',
+              },
+              confidenceCeiling: analysis.confidenceCeiling,
+              dataQuality: analysis.dataQuality,
+              considered: data.length,
+              suppressed: 0,
+              rejectedByValidation: 0,
+              notes: [
+                analysis.ceilingRationale,
+                ...analysis.dataQuality.notes,
+                'This batch was generated earlier; the data-quality figures describe your record as it stands now.',
+              ].filter((note, index, all) => all.indexOf(note) === index),
+            },
+          }
+        }
+      }
+
       const context = await deps.aggregation.buildContext(userId)
       const result = await generateRecommendations(context, {
         llm: deps.llm,

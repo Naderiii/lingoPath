@@ -119,6 +119,7 @@ export function createRecommendationAggregation(
         return {
           id: goal.id,
           period: goal.period,
+          startDate: goal.startDate,
           planId: goal.planId,
           objectiveId: goal.objectiveId,
           progress: {

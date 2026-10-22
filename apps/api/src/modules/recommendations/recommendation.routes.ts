@@ -43,9 +43,11 @@ const recommendationRoutes: FastifyPluginAsync<RecommendationRoutesOptions> = as
 
   // POST /api/v1/recommendations/generate
   fastify.post('/recommendations/generate', async (request, reply) => {
-    GenerateRecommendationsSchema.parse(request.body ?? {})
+    const body = GenerateRecommendationsSchema.parse(request.body ?? {})
     const userId = resolveUserId(request)
-    const result = await service.generate(userId)
+    // `refresh: false` returns the open batch instead of generating again; the
+    // schema has always documented that, and the route used to discard it.
+    const result = await service.generate(userId, { refresh: body.refresh })
     return reply.status(201).send(result)
   })
 
