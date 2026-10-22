@@ -16,7 +16,7 @@ interface PlanCardProps {
 }
 
 export function PlanCard({ plan }: PlanCardProps) {
-  const remainingDays = computeRemainingDaysClient(plan.endDate)
+  const remainingDays = plan.remainingDays ?? computeRemainingDaysClient(plan.endDate)
   const statusDisplay = getPlanStatusDisplay(plan.status)
   const startDate = new Date(plan.startDate)
   const endDate = new Date(plan.endDate)

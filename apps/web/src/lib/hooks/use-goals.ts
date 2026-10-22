@@ -151,6 +151,8 @@ export function useCreateGoal() {
     mutationFn: (data) => apiClient.post<Goal>('/api/v1/goals', data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: goalKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
     },
   })
 }
@@ -162,6 +164,8 @@ export function useUpdateGoal() {
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: goalKeys.detail(variables.id) })
       void queryClient.invalidateQueries({ queryKey: goalKeys.lists() })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
     },
   })
 }
@@ -172,6 +176,8 @@ export function useDeleteGoal() {
     mutationFn: (id) => apiClient.delete<void>(`/api/v1/goals/${id}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: goalKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
     },
   })
 }

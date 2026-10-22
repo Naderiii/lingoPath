@@ -481,7 +481,7 @@ export function createRecommendationRepository(prisma: PrismaClient) {
 
     markApplied(input: { recommendationId: string; userId: string; goalId: string; at: Date }) {
       return prisma.recommendation.updateMany({
-        where: { id: input.recommendationId, userId: input.userId },
+        where: { id: input.recommendationId, userId: input.userId, appliedAt: null },
         data: { appliedAt: input.at, appliedGoalId: input.goalId },
       })
     },

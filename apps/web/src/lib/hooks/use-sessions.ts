@@ -160,6 +160,12 @@ export function useCreateSession() {
     mutationFn: (data) => apiClient.post<StudySessionItem>('/api/v1/sessions', data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
+      void queryClient.invalidateQueries({ queryKey: ['goals'] })
+      void queryClient.invalidateQueries({ queryKey: ['plans'] })
+      void queryClient.invalidateQueries({ queryKey: ['recommendations'] })
     },
   })
 }
@@ -167,12 +173,17 @@ export function useCreateSession() {
 export function useUpdateSession() {
   const queryClient = useQueryClient()
   return useMutation<StudySessionItem, Error, { id: string; data: UpdateSessionInput }>({
-    mutationFn: ({ id, data }) =>
-      apiClient.put<StudySessionItem>(`/api/v1/sessions/${id}`, data),
+    mutationFn: ({ id, data }) => apiClient.put<StudySessionItem>(`/api/v1/sessions/${id}`, data),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.detail(variables.id) })
       void queryClient.invalidateQueries({ queryKey: sessionKeys.lists() })
       void queryClient.invalidateQueries({ queryKey: sessionKeys.todayStats() })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
+      void queryClient.invalidateQueries({ queryKey: ['goals'] })
+      void queryClient.invalidateQueries({ queryKey: ['plans'] })
+      void queryClient.invalidateQueries({ queryKey: ['recommendations'] })
     },
   })
 }
@@ -183,6 +194,12 @@ export function useDeleteSession() {
     mutationFn: (id) => apiClient.delete<void>(`/api/v1/sessions/${id}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: sessionKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['calendar'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
+      void queryClient.invalidateQueries({ queryKey: ['goals'] })
+      void queryClient.invalidateQueries({ queryKey: ['plans'] })
+      void queryClient.invalidateQueries({ queryKey: ['recommendations'] })
     },
   })
 }

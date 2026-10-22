@@ -208,6 +208,8 @@ export function useCreatePlan() {
     mutationFn: (data) => apiClient.post<PlanDetail>('/api/v1/plans', data),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: planKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
     },
   })
 }
@@ -220,6 +222,8 @@ export function useUpdatePlan() {
       void queryClient.invalidateQueries({ queryKey: planKeys.detail(variables.id) })
       void queryClient.invalidateQueries({ queryKey: planKeys.progress(variables.id) })
       void queryClient.invalidateQueries({ queryKey: planKeys.lists() })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
     },
   })
 }
@@ -230,6 +234,8 @@ export function useDeletePlan() {
     mutationFn: (id) => apiClient.delete<void>(`/api/v1/plans/${id}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: planKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      void queryClient.invalidateQueries({ queryKey: ['analytics'] })
     },
   })
 }

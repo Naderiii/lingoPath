@@ -420,12 +420,17 @@ export function createRecommendationService(deps: RecommendationServiceDeps) {
         ...(skillId !== null ? { skillTargets: [{ skillId, targetMinutes }] } : {}),
       })
 
-      await deps.repository.markApplied({
+      const appliedResult = await deps.repository.markApplied({
         recommendationId: id,
         userId,
         goalId: goal.id,
         at: now(),
       })
+
+      if (appliedResult.count === 0) {
+        await deps.repository.goalRepository.delete(goal.id, userId)
+        throw new ConflictError('This recommendation was already added to your plan.')
+      }
 
       const updated = await deps.repository.findById(id, userId)
       if (updated === null) throw new NotFoundError('Recommendation', id)

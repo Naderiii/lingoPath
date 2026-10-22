@@ -130,7 +130,7 @@ function fakePrisma(options: FakeOptions = {}) {
 
 describe('dashboard identity', () => {
   it('queries the seeded default user when no header is sent', async () => {
-    const { prisma, captures } = fakePrisma({ rows: [row('s1', '2026-10-16T10:00:00Z', 30)] })
+    const { prisma, captures } = fakePrisma({ rows: [row('s1', new Date().toISOString(), 30)] })
     const app = Fastify({ logger: false })
     await app.register(errorHandlerPlugin)
     app.decorate('prisma', prisma)

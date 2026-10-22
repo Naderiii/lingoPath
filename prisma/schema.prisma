@@ -210,6 +210,8 @@ model StudySession {
   @@index([startedAt, endedAt])
   // Phase 8 analytics: longest-session lookup per user (ORDER BY duration DESC LIMIT 1).
   @@index([userId, durationMinutes])
+  @@index([planId])
+  @@index([milestoneId])
   @@map("study_sessions")
 }
 
@@ -286,6 +288,8 @@ model LongTermPlan {
 
   @@index([userId, status])
   @@index([userId, startDate, endDate])
+  @@index([objectiveId])
+  @@index([examId])
   @@map("long_term_plans")
 }
 
@@ -311,6 +315,7 @@ model PlanMilestone {
 
   @@index([planId, ordering])
   @@index([planId, startDate, endDate])
+  @@index([skillId])
   @@map("plan_milestones")
 }
 
@@ -342,6 +347,8 @@ model Goal {
 
   @@index([userId, period, isActive])
   @@index([userId, startDate])
+  @@index([planId])
+  @@index([objectiveId])
   @@map("goals")
 }
 
@@ -425,6 +432,7 @@ model Exam {
 
   @@index([userId, status])
   @@index([userId, scheduledAt])
+  @@index([objectiveId])
   @@map("exams")
 }
 
