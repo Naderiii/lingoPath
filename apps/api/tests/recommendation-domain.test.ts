@@ -572,18 +572,24 @@ describe('a plan running behind', () => {
     ],
   })
 
-  it('offers two options and applies neither', () => {
+  it('offers two options, applies neither, and does not contradict itself', () => {
     const analysis = analyzeContext(context)
     const candidates = buildCandidates(context, analysis.signals, analysis)
-    const adjustment = candidates.find((candidate) => candidate.type === 'PLAN_ADJUSTMENT')
+    const planCandidates = candidates.filter((candidate) => candidate.type === 'PLAN_ADJUSTMENT')
 
-    expect(analysis.signals.some((signal) => signal.kind === 'PLAN_BEHIND')).toBe(true)
+    // 232 minutes a day is above the sustainability threshold, so the only honest
+    // plan observation is the unrealistic-pace one. Emitting "add 232 min/day"
+    // beside "232 min/day is not realistic" was two contradictory instructions for
+    // the same plan.
+    expect(analysis.signals.some((signal) => signal.kind === 'PLAN_BEHIND')).toBe(false)
     expect(analysis.signals.some((signal) => signal.kind === 'PLAN_UNREALISTIC_PACE')).toBe(true)
+    expect(planCandidates).toHaveLength(1)
 
-    expect(adjustment).toBeDefined()
+    const adjustment = planCandidates[0]
     expect(adjustment?.relatedPlanId).toBe('plan-1')
-    expect(adjustment?.recommendation).toMatch(/minutes per day/i)
-    expect(adjustment?.rationale).toMatch(/neither is applied|cannot change a plan/i)
+    expect(adjustment?.recommendation).toMatch(/minutes a day/i)
+    expect(adjustment?.recommendation).not.toMatch(/would close the gap/i)
+    expect(adjustment?.rationale).toMatch(/nothing is rewritten without your explicit confirmation/i)
     // A plan reshuffle is advice only: there is no safe automatic write for it.
     expect(adjustment?.suggestedAction).toBeNull()
   })
@@ -692,6 +698,7 @@ describe('buildRecommendationContext', () => {
         {
           id: 'g1',
           period: 'DAILY',
+          startDate: new Date('2026-01-01T00:00:00Z'),
           planId: null,
           objectiveId: null,
           progress: {

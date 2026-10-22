@@ -75,7 +75,14 @@ export const POSTPONE_WINDOW_DAYS = 7
 /** This many rejections of identical evidence stops the repeat. */
 export const REPEATED_REJECTION_THRESHOLD = 2
 
-const REJECTION_ACTIONS = new Set(['REJECTED', 'IGNORED'])
+/**
+ * Only an explicit "no" counts.
+ *
+ * `IGNORED` means the learner never saw the item — the history view labels it "Not
+ * seen". Counting it as a rejection let two unseen rows silence an observation
+ * permanently, which is the opposite of what the learner said (nothing).
+ */
+const REJECTION_ACTIONS = new Set(['REJECTED'])
 
 function minutesLabel(minutes: number): string {
   const hours = Math.floor(minutes / 60)
@@ -103,10 +110,21 @@ function suggestedBlockMinutes(context: RecommendationContext): number {
  * A target that is missed most days is probably too large. The proposal keeps the
  * learner's own rate of meeting it and never drops below a five-minute block, so
  * the suggestion stays recognisably their goal rather than a new one.
+ *
+ * `achievedDailyMinutes` is what the learner actually averages on the days they do
+ * study. Without it the proposal came from the hit rate alone: fourteen days of 59
+ * minutes against a 60-minute target is a 0% rate, and the engine proposed 20
+ * minutes to someone who was one minute short every day. The proposal therefore
+ * starts from the larger of the two and stays strictly below the current target.
  */
-export function proposeLowerDailyTarget(target: number, ratePercent: number): number {
+export function proposeLowerDailyTarget(
+  target: number,
+  ratePercent: number,
+  achievedDailyMinutes = 0,
+): number {
   if (target <= 0) return 10
-  const scaled = roundTo5((target * Math.max(ratePercent, 20)) / 100)
+  const basis = Math.max((target * Math.max(ratePercent, 20)) / 100, achievedDailyMinutes)
+  const scaled = roundTo5(basis)
   return Math.max(5, Math.min(scaled, target - 5))
 }
 
@@ -293,6 +311,50 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
       })
     }
 
+    case 'SKILL_CONCENTRATED': {
+      const studied = context.skills.filter((entry) => entry.totalMinutes > 0)
+      const top = [...studied].sort((a, b) => b.share - a.share)[0]
+      const percent = Math.round((top?.share ?? 0) * 100)
+      const name = top?.name ?? 'One skill'
+      return finish({
+        type: 'BALANCE',
+        title: `${name} holds ${percent}% of your study time`,
+        recommendation: `${name} accounts for ${percent}% of the minutes you have recorded${studied.length <= 1 ? ', and nothing else has been logged yet' : ''}. That is where your practice has gone; if another skill matters for your current goal, one ${block}-minute session there is enough to change the split.`,
+        rationale:
+          'Measured in recorded minutes only. This says where your time went; it does not grade the skills that received less of it, and no level is inferred from any of them.',
+        supportingData: signal.evidence,
+        estimatedDurationMinutes: block,
+        relatedSkillId: null,
+        relatedGoalId: null,
+        relatedPlanId: null,
+        suggestedAction: null,
+      })
+    }
+
+    case 'SKILL_PRACTICE_DROPPED': {
+      if (!skill) return null
+      const recordedLevel = signal.facts?.['level']
+      const recent = Number(signal.facts?.['recentMinutes'] ?? skill.recentMinutes)
+      const prior = Number(signal.facts?.['priorMinutes'] ?? skill.priorMinutes)
+      const levelNote =
+        recordedLevel === undefined
+          ? ''
+          : ` Your recorded ${skill.name.toLowerCase()} level is ${recordedLevel}; that recording has not changed.`
+      return finish({
+        type: 'SKILL',
+        title: `${skill.name} practice dropped in the last ${context.activity.recent.days} days`,
+        recommendation: `You recorded ${minutesLabel(recent)} of ${skill.name.toLowerCase()} practice in the last ${context.activity.recent.days} days, against ${minutesLabel(prior)} in the ${context.activity.prior.days} days before.${levelNote} One ${block}-minute ${skill.name.toLowerCase()} session this week restores the earlier cadence.`,
+        rationale:
+          'This compares minutes practised in two equal windows. Practice volume and recorded ability are separate facts: a quieter fortnight is a frequency observation, not a lower level.',
+        supportingData: signal.evidence,
+        estimatedDurationMinutes: block,
+        relatedSkillId: skill.id,
+        relatedGoalId: goalForSkill(context, skill.id),
+        relatedPlanId: planForSkill(context, skill.id),
+        suggestedAction: weeklyGoalAction(skill.id, block * 2, goalForSkill(context, skill.id)),
+      })
+    }
+
     case 'SKILL_BALANCED': {
       const top = [...context.skills].sort((a, b) => b.share - a.share)[0]
       return finish({
@@ -350,11 +412,14 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
     case 'MISSED_GOALS': {
       const target = context.goalCompletion.dailyTargetMinutes ?? 0
       const rate = context.goalCompletion.rate ?? 0
-      const proposed = proposeLowerDailyTarget(target, rate)
+      const achieved = context.goalCompletion.averageActiveDayMinutes
+      const proposed = proposeLowerDailyTarget(target, rate, achieved)
+      const achievedNote =
+        achieved > 0 ? `, at about ${minutesLabel(achieved)} on the days you did study` : ''
       return finish({
         type: 'DURATION',
         title: 'Set a daily target you can actually hit',
-        recommendation: `Your daily goal is ${minutesLabel(target)} and ${context.goalCompletion.daysMeetingTarget} of the last ${context.goalCompletion.trackedDays} days met it. Try ${minutesLabel(proposed)} for two weeks, then raise it again once it is being met.`,
+        recommendation: `Your daily goal is ${minutesLabel(target)} and ${context.goalCompletion.daysMeetingTarget} of the last ${context.goalCompletion.trackedDays} days met it${achievedNote}. Try ${minutesLabel(proposed)} for two weeks, then raise it again once it is being met.`,
         rationale:
           'A target missed most days is a calibration problem before it is a discipline problem. A smaller target that is met tells you more than a large one that is not.',
         supportingData: signal.evidence,
@@ -365,7 +430,7 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
         suggestedAction: {
           kind: 'CREATE_GOAL',
           period: 'DAILY',
-          targetMinutes: Math.max(10, proposed),
+          targetMinutes: proposed,
           skillId: null,
           relatedGoalId: signal.goalId ?? null,
         },
@@ -376,7 +441,7 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
       return finish({
         type: 'DURATION',
         title: 'Your daily target is working',
-        recommendation: `${context.goalCompletion.daysMeetingTarget} of the last ${context.goalCompletion.trackedDays} days met your daily goal. Hold the target as it is and revisit it when the exam gets closer.`,
+        recommendation: `${context.goalCompletion.daysMeetingTarget} of the last ${context.goalCompletion.trackedDays} days met your daily goal. Hold the target as it is, and revisit it when your objective changes.`,
         rationale:
           'The target is being met at its current size, so changing it now would trade a working calibration for an untested one.',
         supportingData: signal.evidence,
@@ -471,6 +536,49 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
       })
     }
 
+    case 'EXAM_HORIZON': {
+      const exam = context.exams.find((entry) => entry.id === signal.examId)
+      const days = exam?.daysUntil ?? null
+      if (days === null) return null
+      const examType = exam?.type ?? context.objective?.type ?? 'exam'
+      const baseline = signal.facts?.['baseline'] ?? 'none'
+      const planDays = signal.facts?.['planDaysLeft']
+      const planNote =
+        typeof planDays === 'number'
+          ? ` Your active plan has ${planDays} day${planDays === 1 ? '' : 's'} left.`
+          : ''
+
+      if (baseline === 'none') {
+        return finish({
+          type: 'EXAM_PREPARATION',
+          title: `${days} days until your ${examType}: record a baseline`,
+          recommendation: `Your ${examType} exam is ${days} days away and no assessment or mock result is on file.${planNote} Book one timed section in the next two weeks and record the result, so the months ahead can be planned against something measured.`,
+          rationale:
+            'The day count comes from the exam date you recorded, and the request is for a measurement. No score, band or readiness estimate is made here.',
+          supportingData: signal.evidence,
+          estimatedDurationMinutes: 60,
+          relatedSkillId: null,
+          relatedGoalId: null,
+          relatedPlanId: null,
+          suggestedAction: null,
+        })
+      }
+
+      return finish({
+        type: 'EXAM_PREPARATION',
+        title: `${days} days until your ${examType}: keep the current pace`,
+        recommendation: `Your ${examType} exam is ${days} days away.${planNote} Keep the current cadence and record a mock every few weeks, so the plan's pace can be checked against measured results rather than against how the studying feels.`,
+        rationale:
+          'Calendar time and the plan length are facts from your own record. Nothing here estimates readiness or predicts a result.',
+        supportingData: signal.evidence,
+        estimatedDurationMinutes: 60,
+        relatedSkillId: null,
+        relatedGoalId: null,
+        relatedPlanId: null,
+        suggestedAction: null,
+      })
+    }
+
     case 'RECORDED_SCORE_VS_TARGET': {
       const exam = context.exams.find((entry) => entry.id === signal.examId)
       return finish({
@@ -511,9 +619,9 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
       return finish({
         type: 'PLAN_ADJUSTMENT',
         title: 'Your plan is running behind its target',
-        recommendation: `Study progress is ${plan.studyProgressPercent}% against ${plan.timeProgressPercent}% of the plan's calendar elapsed. Adding ${plan.requiredDailyMinutes} minutes per day would close the gap; the alternative is moving the plan's end date.`,
+        recommendation: `Study progress is ${plan.studyProgressPercent}% against ${plan.timeProgressPercent}% of the plan's calendar elapsed. Meeting the target from here needs about ${plan.requiredDailyMinutes} minutes a day for the remaining ${plan.remainingDays} days; the other option is moving the plan's end date.`,
         rationale:
-          'Both numbers come from the plan you set and the sessions logged against it. Two options are offered and neither is applied — the engine cannot change a plan.',
+          'Both numbers come from the plan you set and the sessions logged against it. Two options are offered and neither is applied — the engine cannot change a plan, and it cannot promise that either option reaches the target.',
         supportingData: signal.evidence,
         estimatedDurationMinutes: plan.requiredDailyMinutes > 0 ? plan.requiredDailyMinutes : null,
         relatedSkillId: null,
@@ -529,7 +637,7 @@ function buildFromSignal(input: BuildInput): CandidateRecommendation | null {
       return finish({
         type: 'PLAN_ADJUSTMENT',
         title: 'The remaining pace is not realistic',
-        recommendation: `Hitting the plan target would need ${plan.requiredDailyMinutes} minutes per day for the next ${plan.remainingDays} days — above the ${MAX_REALISTIC_DAILY_MINUTES} minutes a day this engine treats as sustainable. Consider extending the plan or lowering its target.`,
+        recommendation: `Study progress is ${plan.studyProgressPercent}% against ${plan.timeProgressPercent}% of the plan's calendar elapsed, with ${plan.remainingDays} day${plan.remainingDays === 1 ? '' : 's'} left. Hitting the target would need ${plan.requiredDailyMinutes} minutes a day — above the ${MAX_REALISTIC_DAILY_MINUTES} minutes this engine treats as sustainable. Consider extending the plan or lowering its target.`,
         rationale:
           'Arithmetic on the plan target, the minutes already logged and the days left. The suggestion to change the plan is a suggestion: nothing is rewritten without your explicit confirmation.',
         supportingData: signal.evidence,
@@ -587,10 +695,23 @@ export function buildCandidates(
   // thing in different words. The build order already puts the most important
   // observation first, so the first one wins.
   const seenSkill = new Set<string>()
-  const deduped = built.filter((candidate) => {
+  const dedupedBySkill = built.filter((candidate) => {
     if (candidate.relatedSkillId === null) return true
     if (seenSkill.has(candidate.relatedSkillId)) return false
     seenSkill.add(candidate.relatedSkillId)
+    return true
+  })
+
+  // One candidate per plan, for the same reason: "you are behind" and "the pace
+  // you would need is unrealistic" describe one plan, and showing both at once
+  // gave contradictory advice (add 240 minutes a day / 240 minutes a day is not
+  // realistic). Analysis already keeps them mutually exclusive; this is the
+  // guard that keeps a future signal from reintroducing the pair.
+  const seenPlan = new Set<string>()
+  const deduped = dedupedBySkill.filter((candidate) => {
+    if (candidate.relatedPlanId === null) return true
+    if (seenPlan.has(candidate.relatedPlanId)) return false
+    seenPlan.add(candidate.relatedPlanId)
     return true
   })
 
@@ -628,17 +749,19 @@ export function applyFeedbackRules(
   candidates: readonly CandidateRecommendation[],
   context: RecommendationContext,
 ): FeedbackApplication {
-  const currentObjectiveId = context.objective?.id ?? null
   const suppressed: SuppressedCandidate[] = []
   const kept: CandidateRecommendation[] = []
   let confidenceAdjusted = 0
 
   for (const candidate of candidates) {
-    const relevant = context.feedback.filter(
-      (entry) =>
-        entry.evidenceKey === candidate.evidenceKey &&
-        (entry.objectiveId ?? null) === currentObjectiveId,
-    )
+    // Matched on the evidence fingerprint alone — deliberately *not* on the
+    // objective that happened to be active when the decision was taken. A learner
+    // who rejected a listening observation twice did not retract that by adding an
+    // exam or switching IELTS → TOEFL, yet scoping the match to the objective made
+    // every rejection inert the moment either changed. Exam signals already carry
+    // the exam type (and, on result signals, the exam id) in their evidence tag, so a
+    // switch that really changes the facts produces a new key on its own.
+    const relevant = context.feedback.filter((entry) => entry.evidenceKey === candidate.evidenceKey)
 
     const postponed = relevant.find(
       (entry) => entry.action === 'POSTPONED' && entry.daysAgo < POSTPONE_WINDOW_DAYS,

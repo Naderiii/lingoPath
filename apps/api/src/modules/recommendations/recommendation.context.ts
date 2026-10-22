@@ -95,6 +95,8 @@ export interface ContextGoal {
   actualMinutes: number
   percentage: number
   status: string
+  /** Day key the goal started, in the learner's timezone. */
+  startedOn: string
   planId: string | null
   objectiveId: string | null
   skillTargets: Array<{ skillId: string; targetMinutes: number; actualMinutes: number }>
@@ -107,6 +109,8 @@ export interface ContextGoalCompletion {
   dailyTargetMinutes: number | null
   /** 0–100, or `null` when there is no daily target to judge against. */
   rate: number | null
+  /** Minutes per day actually studied on the days that had any study time. */
+  averageActiveDayMinutes: number
 }
 
 export interface ContextMilestone {
@@ -249,6 +253,8 @@ export interface RawGoalProgress {
 export interface RawGoal {
   id: string
   period: GoalPeriod
+  /** First day the goal is in force; bounds how much history can be judged. */
+  startDate: Date
   planId: string | null
   objectiveId: string | null
   progress: RawGoalProgress
@@ -447,11 +453,23 @@ export function buildRecommendationContext(raw: RecommendationRawData): Recommen
   const recent = summarizeWindow(raw.buckets, recentDays, RECENT_WINDOW_DAYS)
   const prior = summarizeWindow(raw.buckets, priorDays, RECENT_WINDOW_DAYS)
 
+  // Goals attached to a different, non-active objective describe preparation the
+  // learner has moved away from. With an active objective they are excluded, so two
+  // goals for two objectives are not reported as one conflict. With no active
+  // objective there is no focus to compare against, so every goal stays in scope.
+  const activeObjectiveId = raw.objective?.id ?? null
+  const scopedGoals =
+    activeObjectiveId === null
+      ? raw.goals
+      : raw.goals.filter(
+          (goal) => goal.objectiveId === null || goal.objectiveId === activeObjectiveId,
+        )
+
   // ── Skills ────────────────────────────────────────────────────────────────
   const recencyById = new Map(raw.skillRecency.map((entry) => [entry.skillId, entry.lastStartedAt]))
   const totalById = new Map(raw.skillTotals.map((entry) => [entry.skillId, entry]))
   const goalSkillIds = new Set(
-    raw.goals.flatMap((goal) => goal.progress.skillProgress.map((target) => target.skillId)),
+    scopedGoals.flatMap((goal) => goal.progress.skillProgress.map((target) => target.skillId)),
   )
   const planSkillIds = new Set(
     raw.plans.flatMap((plan) =>
@@ -501,13 +519,14 @@ export function buildRecommendationContext(raw: RecommendationRawData): Recommen
     .sort((a, b) => b.totalMinutes - a.totalMinutes)
 
   // ── Goals ─────────────────────────────────────────────────────────────────
-  const goals: ContextGoal[] = raw.goals.map((goal) => ({
+  const goals: ContextGoal[] = scopedGoals.map((goal) => ({
     id: goal.id,
     period: goal.period,
     targetMinutes: goal.progress.targetMinutes,
     actualMinutes: goal.progress.actualMinutes,
     percentage: goal.progress.percentage,
     status: goal.progress.status,
+    startedOn: getDayKey(goal.startDate, timezone),
     planId: goal.planId,
     objectiveId: goal.objectiveId,
     skillTargets: goal.progress.skillProgress.map((target) => ({
@@ -517,20 +536,39 @@ export function buildRecommendationContext(raw: RecommendationRawData): Recommen
     })),
   }))
 
-  const dailyTargetMinutes = goals.find((goal) => goal.period === 'DAILY')?.targetMinutes ?? null
+  const dailyGoal = goals.find((goal) => goal.period === 'DAILY')
+  const dailyTargetMinutes = dailyGoal?.targetMinutes ?? null
+
+  // Only the days the goal has actually been in force can be judged. A target set
+  // yesterday has no fourteen-day completion rate, and pretending it does invents
+  // fourteen days of failure.
+  const goalAgeDays =
+    dailyGoal === undefined
+      ? RECENT_WINDOW_DAYS
+      : Math.max(1, diffDayKeys(dailyGoal.startedOn, today) + 1)
+  const trackedDays =
+    dailyGoal === undefined ? recent.days : Math.min(RECENT_WINDOW_DAYS, goalAgeDays)
+
+  const judgedDays = new Set<string>()
+  for (let offset = 0; offset < trackedDays; offset++) {
+    judgedDays.add(addDaysToDayKey(today, -offset))
+  }
+
   const daysMeetingTarget =
     dailyTargetMinutes === null
       ? 0
-      : countDaysMeetingTarget(raw.buckets, recentDays, dailyTargetMinutes)
+      : countDaysMeetingTarget(raw.buckets, judgedDays, dailyTargetMinutes)
 
   const goalCompletion: ContextGoalCompletion = {
-    trackedDays: recent.days,
+    trackedDays,
     daysMeetingTarget,
     dailyTargetMinutes,
     rate:
       dailyTargetMinutes === null
         ? null
-        : Math.round((daysMeetingTarget / Math.max(1, recent.days)) * 100),
+        : Math.round((daysMeetingTarget / Math.max(1, trackedDays)) * 100),
+    averageActiveDayMinutes:
+      recent.activeDays > 0 ? Math.round(recent.minutes / recent.activeDays) : 0,
   }
 
   // ── Plans ─────────────────────────────────────────────────────────────────

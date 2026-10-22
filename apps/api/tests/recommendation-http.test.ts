@@ -3,7 +3,7 @@ import Fastify from 'fastify'
 import type { PrismaClient } from '@prisma/client'
 import errorHandlerPlugin from '../src/plugins/error-handler.js'
 import recommendationRoutes from '../src/modules/recommendations/recommendation.routes.js'
-import { createUnavailableLlmAdapter } from '../src/modules/recommendations/recommendation.llm.js'
+import { createUnavailableLlmAdapter, type LlmAdapter } from '../src/modules/recommendations/recommendation.llm.js'
 
 /**
  * HTTP surface of the recommendation module.
@@ -199,14 +199,14 @@ function createFakePrisma() {
   return { prisma: prisma as unknown as PrismaClient, rows, feedback, createdGoals }
 }
 
-async function buildTestApp() {
+async function buildTestApp(options: { llmAdapter?: LlmAdapter } = {}) {
   const { prisma, rows, feedback, createdGoals } = createFakePrisma()
   const app = Fastify({ logger: false })
   await app.register(errorHandlerPlugin)
   app.decorate('prisma', prisma)
   await app.register(recommendationRoutes, {
     prefix: '/api/v1',
-    llmAdapter: createUnavailableLlmAdapter(),
+    llmAdapter: options.llmAdapter ?? createUnavailableLlmAdapter(),
   })
   await app.ready()
   return { app, rows, feedback, createdGoals }
@@ -249,6 +249,89 @@ describe('POST /api/v1/recommendations/generate', () => {
 
     expect(response.statusCode).toBe(422)
     expect(response.json().error.code).toBe('VALIDATION_ERROR')
+
+    await app.close()
+  })
+
+  it('returns the open batch without generating when refresh is false', async () => {
+    const { app, rows } = await buildTestApp()
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+    const firstId = first.json().data[0].id
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: { refresh: false },
+    })
+
+    expect(replay.statusCode).toBe(201)
+    expect(replay.json().data.map((item: { id: string }) => item.id)).toEqual([firstId])
+    // Regression: the flag was parsed and discarded, so this call used to spend a
+    // generation and supersede the learner's own open batch.
+    expect(replay.json().meta.llm.attempted).toBe(false)
+    expect(replay.json().meta.llm.reason).toMatch(/current batch/i)
+    expect(replay.json().meta.notes.join(' ')).toMatch(/generated earlier/i)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.status).toBe('NEW')
+
+    await app.close()
+  })
+
+  it('generates a fresh batch when refresh is true or omitted', async () => {
+    const { app, rows } = await buildTestApp()
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+    const firstId = first.json().data[0].id
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: { refresh: true },
+    })
+
+    expect(second.statusCode).toBe(201)
+    expect(second.json().data[0].id).not.toBe(firstId)
+    expect(rows).toHaveLength(2)
+    // A new batch retires the old one; two live batches would ask the learner to
+    // answer two versions of the same observation.
+    expect(rows[0]?.status).toBe('SUPERSEDED')
+
+    await app.close()
+  })
+
+  it('still answers when the model provider throws', async () => {
+    const broken: LlmAdapter = {
+      provider: 'broken',
+      model: null,
+      configured: true,
+      complete: async () => {
+        throw new Error('socket hang up')
+      },
+    }
+    const { app, rows } = await buildTestApp({ llmAdapter: broken })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/recommendations/generate',
+      payload: {},
+    })
+
+    // Scenario 9: a provider outage must not become an API error. The main
+    // application, and this endpoint, keep working from the rule engine.
+    expect(response.statusCode).toBe(201)
+    expect(response.json().data.length).toBeGreaterThan(0)
+    expect(response.json().data.every((item: { source: string }) => item.source === 'RULE_BASED')).toBe(
+      true,
+    )
+    expect(response.json().meta.llm).toMatchObject({ attempted: true, available: false })
+    expect(rows).toHaveLength(1)
 
     await app.close()
   })

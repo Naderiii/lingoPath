@@ -115,6 +115,7 @@ export interface LlmContextPayload {
     daysMeetingTarget: number
     dailyTargetMinutes: number | null
     ratePercent: number | null
+    averageActiveDayMinutes: number
   }
   plans: Array<{
     targetMinutes: number
@@ -263,6 +264,7 @@ export function toLlmContextPayload(
       daysMeetingTarget: context.goalCompletion.daysMeetingTarget,
       dailyTargetMinutes: context.goalCompletion.dailyTargetMinutes,
       ratePercent: context.goalCompletion.rate,
+      averageActiveDayMinutes: context.goalCompletion.averageActiveDayMinutes,
     },
     plans: context.plans.slice(0, MAX_PLANS_IN_PAYLOAD).map((plan) => ({
       targetMinutes: plan.targetMinutes,
@@ -451,6 +453,16 @@ const REASONING_VIOLATIONS: Array<ReasoningViolation & { pattern: RegExp }> = [
     pattern:
       /\b(?:writing|reading|listening|speaking|grammar|vocabulary|pronunciation|conversation) (?:is|remains|looks) (?:weak|poor|bad|your weakness)\b/i,
     description: 'grades a skill',
+  },
+  {
+    id: 'weakest-skill',
+    pattern: /\b(?:weakest|weaker than|weak spot|weak point)\b/i,
+    description: 'ranks the learner or a skill as the weakest',
+  },
+  {
+    id: 'ability-deficit',
+    pattern: /\bbelow average\b/i,
+    description: 'states an ability deficit',
   },
   {
     id: 'poor-at',

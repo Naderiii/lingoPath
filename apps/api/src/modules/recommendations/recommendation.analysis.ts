@@ -40,7 +40,9 @@ export type SignalKind =
   | 'STRONG_CONSISTENCY'
   | 'SKILL_NOT_PRACTICED'
   | 'SKILL_LOW_SHARE'
+  | 'SKILL_CONCENTRATED'
   | 'SKILL_BALANCED'
+  | 'SKILL_PRACTICE_DROPPED'
   | 'RECORDED_STRENGTH_UNPRACTISED'
   | 'RECORDED_LEVEL_LOWER'
   | 'NO_ASSESSMENT_DATA'
@@ -50,6 +52,7 @@ export type SignalKind =
   | 'DURATION_PATTERN'
   | 'UPCOMING_EXAM'
   | 'EXAM_WITHOUT_RECENT_RESULT'
+  | 'EXAM_HORIZON'
   | 'RECORDED_SCORE_VS_TARGET'
   | 'EXAM_MISSING_FOR_OBJECTIVE'
   | 'PLAN_BEHIND'
@@ -119,6 +122,10 @@ export const SKILL_NEGLECT_DAYS = 14
 export const SKILL_SHARE_FLOOR = 0.08
 /** Above this share, one skill dominates. */
 export const SKILL_SHARE_CEILING = 0.45
+/** Above this share, concentration is worth naming even without a rebalance target. */
+export const SKILL_CONCENTRATION_REPORT_PERCENT = 60
+/** The least-practised skill counts as under-weighted below half the top one. */
+export const SKILL_LOW_SHARE_RELATIVE_FLOOR = 0.5
 /** "Recent practice dropped": recent minutes at or below this fraction of prior. */
 export const RECENT_PRACTICE_DROP_RATIO = 0.5
 /** Prior window must reach this many minutes before a drop is worth reporting. */
@@ -133,8 +140,19 @@ export const GOAL_COMPLETION_FLOOR_PERCENT = 50
 export const GOAL_COMPLETION_STRONG_PERCENT = 80
 /** Days of daily-goal history required before judging completion. */
 export const GOAL_COMPLETION_MIN_DAYS = 7
+/**
+ * Days the learner must actually have studied before completion means anything.
+ *
+ * `trackedDays` counts calendar days, not attempts. A learner who logged three
+ * sessions in a fortnight has not tested a 60-minute target; calling that target
+ * "too large" would confuse absence with calibration. Below this floor the
+ * consistency signals are the honest ones, and goal completion is not judged.
+ */
+export const GOAL_COMPLETION_MIN_ACTIVE_DAYS = 7
 /** An exam this close changes what to study. */
 export const UPCOMING_EXAM_DAYS = 60
+/** Beyond the countdown, an exam this far out still shapes the plan. */
+export const EXAM_HORIZON_DAYS = 180
 /** A result older than this no longer describes the current preparation. */
 export const STALE_EXAM_RESULT_DAYS = 21
 /** A plan needing more than this per day is not a realistic pace. */
@@ -480,6 +498,72 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
     (skill) => skill.totalSessions > 0 || skill.referencedByGoal || skill.referencedByPlan,
   )
 
+  // Recorded ability per skill. It is used only to keep the two facts apart in the
+  // wording — never as an input to a practice judgement.
+  const recordedLevelBySkill = new Map<string, CefrLevel>()
+  for (const dimension of LEVEL_DIMENSIONS) {
+    const level = assessment.levels[dimension]
+    if (level === null) continue
+    const skill = findSkillForDimension(skills, dimension)
+    if (skill !== null) recordedLevelBySkill.set(skill.id, level)
+  }
+
+  // Per-skill practice *volume*, not recency. A skill can be practised this week
+  // and still be practised far less than it was a fortnight ago; that is a
+  // frequency observation, and it is one the engine could not make while it only
+  // looked at gaps between sessions.
+  const practiceDropped = relevantSkills
+    .filter(
+      (skill) =>
+        skill.totalMinutes > 0 &&
+        skill.priorMinutes >= RECENT_PRACTICE_MIN_BASELINE_MINUTES &&
+        skill.recentMinutes <= skill.priorMinutes * RECENT_PRACTICE_DROP_RATIO,
+    )
+    .sort((a, b) => b.priorMinutes - b.recentMinutes - (a.priorMinutes - a.recentMinutes))
+    .slice(0, 2)
+
+  for (const skill of practiceDropped) {
+    const recordedLevel = recordedLevelBySkill.get(skill.id) ?? null
+    signals.push(
+      makeSignal({
+        id: `skill:practice-drop:${skill.id}`,
+        kind: 'SKILL_PRACTICE_DROPPED',
+        type: 'SKILL',
+        severity: 'ATTENTION',
+        priority: 54,
+        maxConfidence: 'MEDIUM',
+        skillId: skill.id,
+        facts: {
+          recentMinutes: skill.recentMinutes,
+          priorMinutes: skill.priorMinutes,
+          ...(recordedLevel !== null ? { level: recordedLevel } : {}),
+        },
+        evidenceTag: `SKILL_PRACTICE_DROPPED|skill=${skill.id}|recent=${coarseMinutes(skill.recentMinutes)}|prior=${coarseMinutes(skill.priorMinutes)}`,
+        evidence: [
+          {
+            label: `Time on ${skill.name} in the last ${activity.recent.days} days`,
+            value: minutesLabel(skill.recentMinutes),
+            source: 'STUDY_SESSIONS',
+          },
+          {
+            label: `Time on ${skill.name} in the ${activity.prior.days} days before that`,
+            value: minutesLabel(skill.priorMinutes),
+            source: 'STUDY_SESSIONS',
+          },
+          ...(recordedLevel !== null
+            ? [
+                {
+                  label: `Recorded ${skill.name.toLowerCase()} level`,
+                  value: recordedLevel,
+                  source: 'RECORDED_ASSESSMENT' as const,
+                },
+              ]
+            : []),
+        ],
+      }),
+    )
+  }
+
   const neglected = relevantSkills
     .filter(
       (skill) => skill.totalSessions > 0 && (skill.lastPracticedDaysAgo ?? 0) >= SKILL_NEGLECT_DAYS,
@@ -521,26 +605,34 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
 
   const studiedSkills = relevantSkills.filter((skill) => skill.totalMinutes > 0)
   const topSkill = [...studiedSkills].sort((a, b) => b.share - a.share)[0]
-  const weakestShare = [...studiedSkills].sort((a, b) => a.share - b.share)[0]
 
-  const unbalanced =
-    studiedSkills.length >= 3 &&
+  // The least-practised skill is looked for among every *relevant* skill, not only
+  // the ones with minutes: a skill the learner named in a goal or a plan but never
+  // timed is the clearest imbalance there is. A taxonomy skill nobody ever
+  // mentioned stays excluded — naming it would invent a want.
+  const leastPractised = [...relevantSkills]
+    .filter((skill) => skill.id !== topSkill?.id)
+    .sort((a, b) => a.share - b.share || a.totalMinutes - b.totalMinutes)[0]
+
+  const dominant = topSkill !== undefined && topSkill.share >= SKILL_SHARE_CEILING
+  const underWeighted =
+    dominant &&
     topSkill !== undefined &&
-    weakestShare !== undefined &&
-    topSkill.share >= SKILL_SHARE_CEILING &&
-    weakestShare.share < SKILL_SHARE_FLOOR
+    leastPractised !== undefined &&
+    (leastPractised.share < SKILL_SHARE_FLOOR ||
+      leastPractised.share <= topSkill.share * SKILL_LOW_SHARE_RELATIVE_FLOOR)
 
-  if (unbalanced && topSkill && weakestShare) {
+  if (underWeighted && topSkill && leastPractised) {
     signals.push(
       makeSignal({
-        id: `balance:skewed:${weakestShare.id}`,
+        id: `balance:skewed:${leastPractised.id}`,
         kind: 'SKILL_LOW_SHARE',
         type: 'BALANCE',
         severity: 'ATTENTION',
         priority: 80,
         maxConfidence: 'MEDIUM',
-        skillId: weakestShare.id,
-        evidenceTag: `SKILL_LOW_SHARE|top=${topSkill.id}:${coarsePercent(Math.round(topSkill.share * 100))}|low=${weakestShare.id}:${coarsePercent(Math.round(weakestShare.share * 100))}`,
+        skillId: leastPractised.id,
+        evidenceTag: `SKILL_LOW_SHARE|top=${topSkill.id}:${coarsePercent(Math.round(topSkill.share * 100))}|low=${leastPractised.id}:${coarsePercent(Math.round(leastPractised.share * 100))}`,
         evidence: [
           {
             label: `${topSkill.name} share of your study time`,
@@ -548,8 +640,8 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
             source: 'STUDY_SESSIONS',
           },
           {
-            label: `${weakestShare.name} share of your study time`,
-            value: `${Math.round(weakestShare.share * 100)}%`,
+            label: `${leastPractised.name} share of your study time`,
+            value: `${Math.round(leastPractised.share * 100)}%`,
             source: 'STUDY_SESSIONS',
           },
           {
@@ -560,7 +652,54 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
         ],
       }),
     )
-  } else if (studiedSkills.length >= 3 && topSkill !== undefined) {
+  } else if (
+    topSkill !== undefined &&
+    dominant &&
+    (studiedSkills.length <= 1 ||
+      topSkill.share * 100 >= SKILL_CONCENTRATION_REPORT_PERCENT)
+  ) {
+    // Concentration without a defensible rebalance target: either nothing else has
+    // been timed, or the remaining skills are close enough that singling one out
+    // would be arbitrary. The observation is still true and still useful, so it is
+    // reported about the split rather than turned into advice about a skill.
+    signals.push(
+      makeSignal({
+        id: 'balance:concentrated',
+        kind: 'SKILL_CONCENTRATED',
+        type: 'BALANCE',
+        severity: 'ATTENTION',
+        priority: 85,
+        maxConfidence: 'MEDIUM',
+        facts: {
+          topName: topSkill.name,
+          topPercent: Math.round(topSkill.share * 100),
+          studied: studiedSkills.length,
+        },
+        evidenceTag: `SKILL_CONCENTRATED|top=${topSkill.id}:${coarsePercent(Math.round(topSkill.share * 100))}|skills=${studiedSkills.length}`,
+        evidence: [
+          {
+            label: `${topSkill.name} share of your study time`,
+            value: `${Math.round(topSkill.share * 100)}%`,
+            source: 'STUDY_SESSIONS',
+          },
+          {
+            label: 'Skills with recorded study time',
+            value: `${studiedSkills.length}`,
+            source: 'STUDY_SESSIONS',
+          },
+          {
+            label: 'Skills named by an active goal or plan',
+            value: `${relevantSkills.filter((skill) => skill.referencedByGoal || skill.referencedByPlan).length}`,
+            source: 'GOALS',
+          },
+        ],
+      }),
+    )
+  } else if (
+    studiedSkills.length >= 3 &&
+    topSkill !== undefined &&
+    !dominant
+  ) {
     signals.push(
       makeSignal({
         id: 'balance:even',
@@ -611,29 +750,36 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
       'No CEFR assessment is recorded. Nothing about your ability is inferred from study time — only what you record counts.',
     )
   } else {
-    const recordedDimensions = LEVEL_DIMENSIONS.filter(
-      (dimension) => assessment.levels[dimension] !== null,
+    // `overall` is not a skill. A learner often records `overall C1` and `writing C1`
+    // from the same report; letting `overall` anchor the comparison made writing
+    // neither "highest" nor "lower", so the observation disappeared entirely. Only
+    // skill dimensions are ranked, and every dimension sharing the top rank counts
+    // as highest.
+    const ranked = LEVEL_DIMENSIONS.filter(
+      (dimension) => DIMENSION_SKILL_NAMES[dimension] !== undefined,
     )
-    const ranked = recordedDimensions
-      .map((dimension) => ({ dimension, level: assessment.levels[dimension] as CefrLevel }))
+      .map((dimension) => ({ dimension, level: assessment.levels[dimension] }))
+      .filter(
+        (entry): entry is { dimension: LevelDimension; level: CefrLevel } => entry.level !== null,
+      )
       .map((entry) => ({ ...entry, rank: cefrRank(entry.level) }))
-      .sort((a, b) => b.rank - a.rank)
+      .sort((a, b) => b.rank - a.rank || a.dimension.localeCompare(b.dimension))
+
+    const topRank = ranked[0]?.rank
+    const highest = ranked.find((entry) => entry.rank === topRank)
 
     if (ranked.length >= MIN_RECORDED_DIMENSIONS_TO_COMPARE) {
-      const highest = ranked[0] as (typeof ranked)[number]
-
       for (const entry of ranked) {
-        // `overall` is not a skill, so it can anchor the comparison but never
-        // become a skill recommendation.
+        // Every entry here maps to a study skill; `overall` was filtered out above.
         const skill = findSkillForDimension(skills, entry.dimension)
         if (!skill) continue
 
         const gap = skill.lastPracticedDaysAgo
         if (gap === null || gap < 7) continue
 
-        const isHighest = entry.rank === highest.rank && entry.dimension === highest.dimension
+        const isTop = topRank !== undefined && entry.rank === topRank
 
-        if (isHighest) {
+        if (isTop) {
           signals.push(
             makeSignal({
               id: `ability:strong-unpractised:${skill.id}`,
@@ -662,7 +808,7 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
               ],
             }),
           )
-        } else if (entry.rank < highest.rank) {
+        } else if (topRank !== undefined) {
           signals.push(
             makeSignal({
               id: `ability:lower-recorded:${skill.id}`,
@@ -682,7 +828,7 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
                 },
                 {
                   label: 'Your highest recorded level',
-                  value: `${highest.level} (${highest.dimension})`,
+                  value: `${highest?.level ?? entry.level} (${highest?.dimension ?? entry.dimension})`,
                   source: 'RECORDED_ASSESSMENT',
                 },
                 {
@@ -699,14 +845,25 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
   }
 
   // ── Goals ─────────────────────────────────────────────────────────────────
+  //
+  // Completion is judged only when the goal has been running long enough to have a
+  // history *and* the learner studied on enough of those days. Without the second
+  // gate, three sessions in a fortnight look like evidence that a 60-minute target
+  // is too large — which confuses not showing up with aiming too high.
+  const attendedDays = activity.recent.activeDays
+  const dailyGoal = goals.find((goal) => goal.period === 'DAILY')
+
   if (goalCompletion.dailyTargetMinutes === null) {
     notes.push('No daily goal is set, so goal completion could not be judged.')
-  } else if (
-    goalCompletion.trackedDays >= GOAL_COMPLETION_MIN_DAYS &&
-    goalCompletion.rate !== null
-  ) {
-    const dailyGoal = goals.find((goal) => goal.period === 'DAILY')
-
+  } else if (goalCompletion.trackedDays < GOAL_COMPLETION_MIN_DAYS) {
+    notes.push(
+      `Your daily goal has been running for ${goalCompletion.trackedDays} day${goalCompletion.trackedDays === 1 ? '' : 's'}, which is too short a history to judge completion.`,
+    )
+  } else if (attendedDays < GOAL_COMPLETION_MIN_ACTIVE_DAYS) {
+    notes.push(
+      `You studied on ${attendedDays} of the last ${goalCompletion.trackedDays} days. That is too few attempts to say whether the daily target is the right size, so completion is not judged.`,
+    )
+  } else if (goalCompletion.rate !== null) {
     if (goalCompletion.rate < GOAL_COMPLETION_FLOOR_PERCENT) {
       signals.push(
         makeSignal({
@@ -948,6 +1105,82 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
     }
   }
 
+  // An exam further out than the countdown still decides what the next months are
+  // for. Without this, a learner four months from an IELTS date received no
+  // exam-shaped advice at all: the countdown starts at 60 days, and the objective's
+  // own target date was carried in the context but never reasoned about.
+  const horizonExams = scopedExams
+    .filter(
+      (exam) =>
+        exam.daysUntil !== null &&
+        exam.daysUntil > UPCOMING_EXAM_DAYS &&
+        exam.daysUntil <= EXAM_HORIZON_DAYS,
+    )
+    .sort((a, b) => (a.daysUntil ?? 0) - (b.daysUntil ?? 0))
+
+  for (const exam of horizonExams) {
+    const days = exam.daysUntil as number
+    const hasRecentResult =
+      exam.latestResult !== null && exam.latestResult.takenDaysAgo <= STALE_EXAM_RESULT_DAYS
+    const baseline = hasRecentResult ? 'result' : assessment.recorded ? 'assessment' : 'none'
+    const baselineSource =
+      baseline === 'result' ? ('RECORDED_EXAM_RESULT' as const) : ('RECORDED_ASSESSMENT' as const)
+    const plan = plans[0]
+
+    signals.push(
+      makeSignal({
+        id: `exam:horizon:${exam.id}`,
+        kind: 'EXAM_HORIZON',
+        type: 'EXAM_PREPARATION',
+        // A missing baseline is actionable; an exam that already has measurements
+        // is context, and context does not earn a slot ahead of real observations.
+        severity: baseline === 'none' ? 'ATTENTION' : 'INFO',
+        priority: 18,
+        maxConfidence: 'MEDIUM',
+        examId: exam.id,
+        facts: {
+          daysUntil: days,
+          examType: exam.type,
+          baseline,
+          ...(plan ? { planDaysLeft: plan.remainingDays } : {}),
+        },
+        evidenceTag: `EXAM_HORIZON|${exam.type}|days=${coarseDays(days)}|baseline=${baseline}`,
+        evidence: [
+          { label: 'Exam type', value: exam.type, source: 'OBJECTIVE' },
+          { label: 'Days until the exam date', value: `${days}`, source: 'OBJECTIVE' },
+          ...(objective === null || objective.targetDate === null
+            ? []
+            : [
+                {
+                  label: 'Objective target date',
+                  value: objective.targetDate,
+                  source: 'OBJECTIVE' as const,
+                },
+              ]),
+          ...(plan
+            ? [
+                {
+                  label: 'Days left in your active plan',
+                  value: `${plan.remainingDays}`,
+                  source: 'PLANS' as const,
+                },
+              ]
+            : []),
+          {
+            label: 'Baseline on file',
+            value:
+              baseline === 'result'
+                ? `a result recorded ${exam.latestResult?.takenDaysAgo ?? 0} days ago`
+                : baseline === 'assessment'
+                  ? `a level recorded ${assessment.assessedOn ?? 'with no date'}`
+                  : 'none recorded',
+            source: baselineSource,
+          },
+        ],
+      }),
+    )
+  }
+
   if (objectiveExamType !== null && objective) {
     const matchingExam = scopedExams.some((exam) => exam.status !== 'CANCELLED')
     if (!matchingExam) {
@@ -975,7 +1208,15 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
 
   // ── Plans ─────────────────────────────────────────────────────────────────
   for (const plan of plans) {
-    if (plan.paceStatus === 'behind') {
+    const sustainablePace = plan.requiredDailyMinutes <= MAX_REALISTIC_DAILY_MINUTES
+
+    // A plan that has already run out of days has no pace left to recommend: the
+    // required-minutes arithmetic divides by a floor of one day and produces a
+    // number nobody could act on. A pace above the sustainability threshold is the
+    // unrealistic-pace signal's job, so it is not repeated here — two candidates
+    // for one plan contradicted each other ("add 240 min/day" next to "240 min/day
+    // is not realistic").
+    if (plan.paceStatus === 'behind' && plan.remainingDays > 0 && sustainablePace) {
       signals.push(
         makeSignal({
           id: `plan:behind:${plan.id}`,
@@ -1019,6 +1260,16 @@ export function analyzeContext(context: RecommendationContext): RecommendationAn
           planId: plan.id,
           evidenceTag: `PLAN_UNREALISTIC_PACE|${plan.id}|required=${coarseMinutes(plan.requiredDailyMinutes)}`,
           evidence: [
+            {
+              label: 'Study progress towards the plan target',
+              value: `${plan.studyProgressPercent}% (${minutesLabel(plan.actualMinutes)} of ${minutesLabel(plan.targetMinutes)})`,
+              source: 'PLANS',
+            },
+            {
+              label: 'Calendar time elapsed',
+              value: `${plan.timeProgressPercent}%`,
+              source: 'PLANS',
+            },
             {
               label: 'Minutes per day needed to hit the plan target',
               value: `${plan.requiredDailyMinutes}`,

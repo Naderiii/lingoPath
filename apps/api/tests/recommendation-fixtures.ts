@@ -61,6 +61,7 @@ export interface ContextOptions {
   activeDays?: number
   recentMinutes?: number
   priorMinutes?: number
+  recentActiveDays?: number
   lastSessionDaysAgo?: number | null
   currentStreak?: number
   longestStreak?: number
@@ -155,6 +156,7 @@ export function makeContext(options: ContextOptions = {}): RecommendationContext
     daysMeetingTarget: 0,
     dailyTargetMinutes: null,
     rate: null,
+    averageActiveDayMinutes: 0,
     ...options.goalCompletion,
   }
 
@@ -165,7 +167,12 @@ export function makeContext(options: ContextOptions = {}): RecommendationContext
     hasAnyObjective: options.hasAnyObjective ?? true,
     activity: {
       windowDays: 14,
-      recent: { days: 14, minutes: options.recentMinutes ?? 240, sessions: 8, activeDays: 8 },
+      recent: {
+        days: 14,
+        minutes: options.recentMinutes ?? 240,
+        sessions: 8,
+        activeDays: options.recentActiveDays ?? 8,
+      },
       prior: { days: 14, minutes: options.priorMinutes ?? 220, sessions: 7, activeDays: 7 },
       lifetime: {
         minutes: totalMinutes,
@@ -197,6 +204,7 @@ export function makeGoal(input: Partial<ContextGoal> & { id: string }): ContextG
     actualMinutes: 30,
     percentage: 50,
     status: 'in_progress',
+    startedOn: '2026-01-01',
     planId: null,
     objectiveId: null,
     skillTargets: [],

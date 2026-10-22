@@ -47,8 +47,7 @@ Repository: Turborepo + pnpm workspaces — `apps/api` (Fastify + Prisma), `apps
 
 ## Method
 
-1. Static evidence sweep of the whole tree (server-local date parsing, UTC day keys, instant day math,
-   percentage math, validation gaps, unsafe casts).
+1. Static evidence sweep of the whole tree (server-local date parsing, UTC day keys, instant day math, percentage math, validation gaps, unsafe casts).
 2. Two read-only delegated sweeps (API accounting core; API platform + schema + aggregations).
 3. A third web-focused sweep performed directly by the coordinator (form defaults, timer flow, query keys).
 4. Every reported defect re-verified in source before any fix; fixes kept minimal and backward compatible.
